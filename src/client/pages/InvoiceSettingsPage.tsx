@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import type { RoundingMode, Settings } from '../../shared/types';
-import { MONTH_NAMES, monthKey, parseMonthKey, toZonedParts } from '../../shared/time';
+import { MONTH_NAMES, formatLongDate, monthKey, parseMonthKey, toZonedParts } from '../../shared/time';
 import { describeRounding, listPeriods, periodAt, roundSeconds } from '../../shared/invoice';
 import { api } from '../api';
 
@@ -282,6 +282,39 @@ export function InvoiceSettingsPage({ settings, onSaved }: Props) {
           </label>
         </fieldset>
 
+        <fieldset>
+          <legend>Invoice layout</legend>
+          <p className="fieldset-intro">
+            How an invoice opens. Both can be toggled on the invoice itself without changing
+            these defaults — that choice lives in the document's URL, not the database.
+          </p>
+
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={draft.defaultDetailedInvoice}
+              onChange={(e) => set('defaultDetailedInvoice', e.target.checked)}
+            />
+            <span>Detailed invoice</span>
+          </label>
+          <small className="standalone-hint">
+            On: one line per task description. Off: a single line reading “Software development
+            services - {periodExample(draft)}”. The amount due is identical either way.
+          </small>
+
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={draft.defaultDetailedTimeLog}
+              onChange={(e) => set('defaultDetailedTimeLog', e.target.checked)}
+            />
+            <span>Detailed time log</span>
+          </label>
+          <small className="standalone-hint">
+            Appends the day-by-day breakdown, starting on its own page.
+          </small>
+        </fieldset>
+
         <div className="form-actions">
           <button type="submit" className="primary" disabled={busy}>
             {busy ? 'Saving…' : 'Save settings'}
@@ -385,6 +418,13 @@ function RoundingExample({ settings }: { settings: Settings }) {
       {describeRounding(settings)}: 2h 07m of tracked time bills as {(billed / 3600).toFixed(2)} hours.
     </>
   );
+}
+
+/** The date range the summary line would carry for the first period. */
+function periodExample(settings: Settings): string {
+  const p = periodAt(settings, 0);
+  const fmt = (ms: number) => formatLongDate(ms, settings.timezone);
+  return `${fmt(p.startUtc)} to ${fmt(p.endUtc)}`;
 }
 
 function ordinal(n: number): string {

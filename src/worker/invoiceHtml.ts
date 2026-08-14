@@ -5,9 +5,9 @@
  * deterministic and the page can be handed to any headless renderer later.
  */
 
-import type { Invoice } from '../shared/types';
-import { describeRounding, formatHours, formatMoney } from '../shared/invoice';
-import { MONTH_NAMES, formatClock, formatCompact, toZonedParts } from '../shared/time';
+import type { Invoice, InvoiceLayout, InvoiceLine } from '../shared/types';
+import { describeRounding, formatHours, formatMoney, summaryLine } from '../shared/invoice';
+import { formatClock, formatCompact, formatLongDate } from '../shared/time';
 
 function esc(value: string): string {
   return value
@@ -22,14 +22,9 @@ function multiline(value: string): string {
   return esc(value).replace(/\r?\n/g, '<br>');
 }
 
-function longDate(utcMs: number, tz: string): string {
-  const p = toZonedParts(utcMs, tz);
-  return `${p.day} ${MONTH_NAMES[p.month - 1]} ${p.year}`;
-}
-
 /** The last instant covered by a period, since the stored end bound is exclusive. */
 function inclusiveEnd(utcMs: number, tz: string): string {
-  return longDate(utcMs - 1, tz);
+  return formatLongDate(utcMs - 1, tz);
 }
 
 function weekday(dateKey: string): string {
@@ -37,10 +32,15 @@ function weekday(dateKey: string): string {
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' });
 }
 
-export function renderInvoiceHtml(invoice: Invoice): string {
-  const { period, settings: s, lines, details } = invoice;
+export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): string {
+  const { period, settings: s, details } = invoice;
   const currency = s.currency;
   const showRates = s.hourlyRate > 0;
+
+  // A summary invoice is the same money, presented as one line — never a
+  // different total. See summaryLine() for why it must not re-round.
+  const lines: InvoiceLine[] = layout.detailedInvoice ? invoice.lines : [summaryLine(invoice)];
+  const showLog = layout.detailedTimeLog && details.length > 0;
 
   const noticeBanner = invoice.inProgress
     ? `<div class="notice">This period is still open — it ends on ${esc(inclusiveEnd(period.endUtc, s.timezone))}.${
@@ -81,10 +81,14 @@ export function renderInvoiceHtml(invoice: Invoice): string {
     })
     .join('\n');
 
+  // On a summary invoice "each line item" would be misleading — there is only
+  // one line, but the rounding still happened per underlying task.
   const roundingNote =
     s.roundingMode === 'exact'
       ? ''
-      : `<p class="rounding-note">${esc(describeRounding(s))}. Rounding is applied to each line item. Tracked time is shown for reference.</p>`;
+      : `<p class="rounding-note">${esc(describeRounding(s))}. Rounding is applied ${
+          layout.detailedInvoice ? 'to each line item' : 'per task before totalling'
+        }. Tracked time is shown for reference.</p>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -121,12 +125,24 @@ export function renderInvoiceHtml(invoice: Invoice): string {
     box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 8px 24px rgba(0,0,0,.08);
   }
 
-  .toolbar { max-width: 190mm; margin: 0 auto 16px; display: flex; gap: 8px; }
+  .toolbar {
+    max-width: 190mm; margin: 0 auto 16px; display: flex; gap: 8px;
+    align-items: center; flex-wrap: wrap;
+  }
   .toolbar a, .toolbar button {
     font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--rule);
     background: #fff; color: var(--ink); cursor: pointer; text-decoration: none;
   }
-  .toolbar button { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .toolbar button.print { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .layout-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .layout-form label {
+    display: flex; align-items: center; gap: 7px; cursor: pointer;
+    padding: 8px 13px; border: 1px solid var(--rule); border-radius: 6px;
+    background: #fff; font-size: 12.5px; white-space: nowrap;
+  }
+  .layout-form label:hover { border-color: var(--accent); }
+  .layout-form input[type="checkbox"] { margin: 0; cursor: pointer; }
 
   header.masthead { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
   .logo img { max-height: 64px; max-width: 220px; object-fit: contain; }
@@ -168,8 +184,10 @@ export function renderInvoiceHtml(invoice: Invoice): string {
 
   .rounding-note { margin-top: 12px; color: var(--muted); font-size: 11px; }
 
-  .detail { margin-top: 36px; page-break-before: auto; }
+  /* The log lives on its own sheet so it always starts a fresh page. */
+  .detail-sheet { margin-top: 24px; }
   .detail h2 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  .detail-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
   .detail table { margin-top: 8px; font-size: 11.5px; }
   .detail tbody td { padding: 4px 0; border-bottom: none; }
   tr.detail-day td { padding-top: 12px; font-weight: 600; border-bottom: 1px solid var(--rule); }
@@ -188,12 +206,40 @@ export function renderInvoiceHtml(invoice: Invoice): string {
     .toolbar { display: none; }
     thead { display: table-header-group; }
     tr { page-break-inside: avoid; }
+    /* Requested: the time log always starts on a new page. */
+    .detail-sheet { margin-top: 0; break-before: page; page-break-before: always; }
   }
 </style>
 </head>
 <body>
 <div class="toolbar">
-  <button type="button" onclick="window.print()">Print / Save as PDF</button>
+  <button type="button" class="print" onclick="window.print()">Print / Save as PDF</button>
+  <!--
+    Layout is a GET form rather than a script so the document stays reproducible
+    from its URL alone: /invoice/KEY?detailed=0&timelog=1 renders identically in a
+    headless renderer with JavaScript disabled.
+
+    The hidden input before each checkbox supplies the "0" that an unchecked box
+    would otherwise not submit. Disabling it when the box is ticked keeps exactly
+    one value per name in the resulting URL, so the address stays clean enough to
+    bookmark or paste. Without scripting both are submitted instead and the server
+    takes the last value, which resolves the same way.
+  -->
+  <form class="layout-form" method="get">
+    <label>
+      <input type="hidden" name="detailed" value="0"${layout.detailedInvoice ? ' disabled' : ''}>
+      <input type="checkbox" name="detailed" value="1"${layout.detailedInvoice ? ' checked' : ''}
+             onchange="this.previousElementSibling.disabled = this.checked; this.form.submit()">
+      Detailed invoice
+    </label>
+    <label>
+      <input type="hidden" name="timelog" value="0"${layout.detailedTimeLog ? ' disabled' : ''}>
+      <input type="checkbox" name="timelog" value="1"${layout.detailedTimeLog ? ' checked' : ''}
+             onchange="this.previousElementSibling.disabled = this.checked; this.form.submit()">
+      Detailed time log
+    </label>
+    <noscript><button type="submit">Apply</button></noscript>
+  </form>
   <a href="/invoices">Back to invoices</a>
 </div>
 
@@ -204,7 +250,7 @@ export function renderInvoiceHtml(invoice: Invoice): string {
       <h1>Invoice</h1>
       <div class="number">${esc(period.invoiceNumber)}</div>
       <div class="meta">
-        ${esc(longDate(period.startUtc, s.timezone))} &ndash; ${esc(inclusiveEnd(period.endUtc, s.timezone))}<br>
+        ${esc(formatLongDate(period.startUtc, s.timezone))} &ndash; ${esc(inclusiveEnd(period.endUtc, s.timezone))}<br>
         ${esc(period.label)} &middot; ${esc(s.timezone)}
       </div>
     </div>
@@ -253,21 +299,24 @@ export function renderInvoiceHtml(invoice: Invoice): string {
 
   ${roundingNote}
 
-  ${
-    details.length > 0
-      ? `<div class="detail">
+  ${s.invoiceFooter ? `<footer class="pay">${multiline(s.invoiceFooter)}</footer>` : ''}
+</div>
+
+${
+  showLog
+    ? `<div class="sheet detail-sheet">
+  <div class="detail">
     <h2>Detailed time log</h2>
+    <div class="detail-meta">${esc(period.invoiceNumber)} &middot; ${esc(formatLongDate(period.startUtc, s.timezone))} &ndash; ${esc(inclusiveEnd(period.endUtc, s.timezone))}</div>
     <table>
       <tbody>
         ${detailRows}
       </tbody>
     </table>
-  </div>`
-      : ''
-  }
-
-  ${s.invoiceFooter ? `<footer class="pay">${multiline(s.invoiceFooter)}</footer>` : ''}
-</div>
+  </div>
+</div>`
+    : ''
+}
 </body>
 </html>`;
 }

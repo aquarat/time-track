@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import type { Entry, Settings } from '../src/shared/types';
-import { buildInvoice, findPeriod, listPeriods, periodAt, roundSeconds } from '../src/shared/invoice';
+import {
+  buildInvoice,
+  findPeriod,
+  listPeriods,
+  periodAt,
+  roundSeconds,
+  summaryLine,
+  summaryLineDescription,
+} from '../src/shared/invoice';
 import { fromZonedParts, startOfWeek, toZonedParts } from '../src/shared/time';
 
 const SAST = 'Africa/Johannesburg'; // UTC+2, no DST
@@ -23,6 +31,8 @@ const base: Settings = {
   invoiceFooter: '',
   roundingMode: 'exact',
   roundingIncrement: 15,
+  defaultDetailedInvoice: true,
+  defaultDetailedTimeLog: true,
   updatedAt: 0,
 };
 
@@ -222,6 +232,62 @@ describe('invoice building', () => {
     expect(invoice.lines).toEqual([]);
     expect(invoice.total).toBe(0);
     expect(invoice.billedSeconds).toBe(0);
+  });
+});
+
+describe('summary (non-detailed) invoice', () => {
+  const now = at(2026, 3, 1, 12);
+  const entries = [
+    entry('a', 'Migration', at(2026, 2, 27, 9), at(2026, 2, 27, 10, 7)),
+    entry('b', 'Migration', at(2026, 2, 28, 9), at(2026, 2, 28, 10, 3)),
+    entry('c', 'Support', at(2026, 3, 1, 9), at(2026, 3, 1, 9, 22)),
+    entry('d', '', at(2026, 3, 1, 11), at(2026, 3, 1, 11, 40)),
+  ];
+
+  test('collapsing to one line never changes the amount due', () => {
+    // The invariant that matters: a display toggle must not alter what is billed.
+    for (const mode of ['exact', 'up', 'down', 'nearest'] as const) {
+      for (const increment of [15, 30, 60]) {
+        const settings = { ...base, roundingMode: mode, roundingIncrement: increment };
+        const invoice = buildInvoice(periodAt(settings, 1), settings, entries, now);
+        const line = summaryLine(invoice);
+        expect(line.amount).toBe(invoice.total);
+        expect(line.billedSeconds).toBe(invoice.billedSeconds);
+        expect(line.rawSeconds).toBe(invoice.rawSeconds);
+      }
+    }
+  });
+
+  test('the single line carries the sum of the rounded lines, not a re-rounded total', () => {
+    const settings = { ...base, roundingMode: 'up' as const, roundingIncrement: 60 };
+    const invoice = buildInvoice(periodAt(settings, 1), settings, entries, now);
+    // Three line items — Migration (2h10m), Support (22m), (no description) (40m) —
+    // each rounded up to a whole hour independently, giving 3h + 1h + 1h.
+    expect(invoice.billedSeconds).toBe(5 * 3600);
+    expect(summaryLine(invoice).billedSeconds).toBe(5 * 3600);
+    // Re-rounding the 3h12m raw total instead would bill 4h, an hour less.
+    expect(roundSeconds(invoice.rawSeconds, 'up', 60)).toBe(4 * 3600);
+  });
+
+  test('the description names the service and the period boundaries', () => {
+    const period = periodAt(base, 0);
+    expect(summaryLineDescription(period, base.timezone)).toBe(
+      'Software development services - 26 January 2026 to 26 February 2026',
+    );
+  });
+
+  test('the description follows the configured timezone', () => {
+    const settings = { ...base, timezone: 'Pacific/Kiritimati' }; // UTC+14
+    const period = periodAt(settings, 0);
+    expect(summaryLineDescription(period, settings.timezone)).toContain('26 January 2026');
+    expect(summaryLineDescription(period, settings.timezone)).toContain('26 February 2026');
+  });
+
+  test('an empty period summarises to a zero line rather than breaking', () => {
+    const invoice = buildInvoice(periodAt(base, 1), base, [], now);
+    const line = summaryLine(invoice);
+    expect(line.billedSeconds).toBe(0);
+    expect(line.amount).toBe(0);
   });
 });
 

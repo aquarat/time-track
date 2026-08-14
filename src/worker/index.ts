@@ -1,4 +1,4 @@
-import type { Entry, Settings } from '../shared/types';
+import type { Entry, InvoiceLayout, Settings } from '../shared/types';
 import { buildInvoice, findPeriod, listPeriods, summarisePeriod } from '../shared/invoice';
 import { renderInvoiceHtml } from './invoiceHtml';
 import { requireAccess } from './access';
@@ -197,11 +197,40 @@ async function loadInvoice(env: Env, key: string, now: number) {
   return buildInvoice(period, settings, entries, now);
 }
 
+const TRUE_TOKENS = new Set(['1', 'true', 'on', 'yes']);
+const FALSE_TOKENS = new Set(['0', 'false', 'off', 'no']);
+
+/**
+ * Read a layout toggle from the query string.
+ *
+ * The toolbar form submits a hidden "0" ahead of each checkbox so an unchecked
+ * box still sends a value, which means the *last* occurrence is authoritative.
+ *
+ * Only explicitly recognised tokens decide anything; an absent, empty or
+ * unrecognised value falls back to the configured default. Treating a typo as
+ * "off" would quietly hand back a summary invoice when a detailed one was
+ * meant, and these URLs are documented for headless rendering where nobody is
+ * looking at the checkboxes.
+ */
+function layoutFlag(url: URL, name: string, fallback: boolean): boolean {
+  const values = url.searchParams.getAll(name);
+  for (let i = values.length - 1; i >= 0; i--) {
+    const token = values[i].trim().toLowerCase();
+    if (TRUE_TOKENS.has(token)) return true;
+    if (FALSE_TOKENS.has(token)) return false;
+  }
+  return fallback;
+}
+
 async function handleInvoicePage(env: Env, url: URL, now: number): Promise<Response> {
   const match = /^\/invoice\/(\d{4}-\d{2})$/.exec(url.pathname);
   if (!match) return new Response('Not found', { status: 404 });
   const invoice = await loadInvoice(env, match[1], now);
-  return new Response(renderInvoiceHtml(invoice), {
+  const layout: InvoiceLayout = {
+    detailedInvoice: layoutFlag(url, 'detailed', invoice.settings.defaultDetailedInvoice),
+    detailedTimeLog: layoutFlag(url, 'timelog', invoice.settings.defaultDetailedTimeLog),
+  };
+  return new Response(renderInvoiceHtml(invoice, layout), {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       // The document reflects live tracked time; never let it be cached.

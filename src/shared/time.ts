@@ -178,3 +178,9 @@ export function formatClock(utcMs: number, tz: string): string {
   const p = toZonedParts(utcMs, tz);
   return `${pad2(p.hour)}:${pad2(p.minute)}`;
 }
+
+/** "26 January 2026" — the calendar date of an instant in `tz`. */
+export function formatLongDate(utcMs: number, tz: string): string {
+  const p = toZonedParts(utcMs, tz);
+  return `${p.day} ${MONTH_NAMES[p.month - 1]} ${p.year}`;
+}

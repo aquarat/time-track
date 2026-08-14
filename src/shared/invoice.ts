@@ -21,6 +21,7 @@ import {
   addMonths,
   dateKey,
   daysInMonth,
+  formatLongDate,
   fromZonedParts,
   monthKey,
   monthLabel,
@@ -213,6 +214,38 @@ export function summarisePeriod(
     total: invoice.total,
     inProgress: invoice.inProgress,
     entryCount: invoice.details.reduce((sum, d) => sum + d.entries.length, 0),
+  };
+}
+
+/** Service wording on a summary (non-detailed) invoice. */
+export const SUMMARY_SERVICE_DESCRIPTION = 'Software development services';
+
+/**
+ * The description on a summary invoice's single line.
+ *
+ * Uses the period's own boundaries — "26 January 2026 to 26 February 2026" —
+ * where the end is the exclusive cut-over, matching how the period is defined
+ * rather than the inclusive last day shown in the document header.
+ */
+export function summaryLineDescription(period: Period, tz: string): string {
+  return `${SUMMARY_SERVICE_DESCRIPTION} - ${formatLongDate(period.startUtc, tz)} to ${formatLongDate(period.endUtc, tz)}`;
+}
+
+/**
+ * Collapse an invoice to one line.
+ *
+ * Deliberately reuses the already-computed totals rather than re-rounding the
+ * raw seconds: rounding is applied per description, so re-rounding the sum here
+ * would make the same period bill a different amount depending on nothing more
+ * than a display toggle.
+ */
+export function summaryLine(invoice: Invoice): InvoiceLine {
+  return {
+    description: summaryLineDescription(invoice.period, invoice.settings.timezone),
+    rawSeconds: invoice.rawSeconds,
+    billedSeconds: invoice.billedSeconds,
+    billedHours: invoice.billedHours,
+    amount: invoice.total,
   };
 }
 

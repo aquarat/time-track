@@ -225,10 +225,32 @@ Other behaviour worth knowing:
 
 ## The invoice document
 
-`/invoice/2026-06` is server-rendered HTML with no client JavaScript, laid out for A4.
-Print or Save-as-PDF from the browser. It carries the logo, both addresses, line items
-grouped by task, totals, the rounding note, a day-by-day time log for a client who wants
-to check the detail, and your footer.
+`/invoice/2026-06` is server-rendered HTML laid out for A4. Print or Save-as-PDF from the
+browser. It carries the logo, both addresses, line items, totals, the rounding note, an
+optional day-by-day time log, and your footer.
+
+### Layout toggles
+
+Two checkboxes in the document's toolbar (neither prints):
+
+| | On | Off |
+|---|---|---|
+| **Detailed invoice** | One line per task description | A single line: *Software development services - 26 January 2026 to 26 February 2026* |
+| **Detailed time log** | Day-by-day breakdown, starting on its own page | Omitted entirely |
+
+**The amount due is identical either way.** Rounding is applied per task description, and
+the summary line reports the sum of those already-rounded lines rather than re-rounding the
+raw total — otherwise a presentation choice would change what you charge. There is a test
+covering every rounding mode and increment for exactly this.
+
+Defaults live on the invoice settings page. A per-invoice choice is **not** persisted: it
+lives in the URL as `?detailed=0&timelog=1`, so a particular rendering is reproducible and
+can be bookmarked or handed to a headless renderer. Only `1/true/on/yes` and
+`0/false/off/no` are recognised; anything absent or unrecognised falls back to the
+configured default rather than silently rendering the wrong document.
+
+The toolbar is a plain GET form, so the toggles work with JavaScript disabled. Scripting
+only tidies the resulting query string.
 
 ## Notes
 

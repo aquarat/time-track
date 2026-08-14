@@ -17,6 +17,8 @@ interface SettingsRow {
   invoice_footer: string;
   rounding_mode: string;
   rounding_increment: number;
+  default_detailed_invoice: number;
+  default_detailed_time_log: number;
   updated_at: number;
 }
 
@@ -54,6 +56,9 @@ function rowToSettings(row: SettingsRow): Settings {
       ? (row.rounding_mode as RoundingMode)
       : 'exact',
     roundingIncrement: row.rounding_increment,
+    // SQLite has no boolean type; the columns hold 0/1.
+    defaultDetailedInvoice: row.default_detailed_invoice !== 0,
+    defaultDetailedTimeLog: row.default_detailed_time_log !== 0,
     updatedAt: row.updated_at,
   };
 }
@@ -94,6 +99,8 @@ export async function saveSettings(
   if (!ROUNDING_MODES.includes(next.roundingMode)) throw new HttpError(400, 'Invalid roundingMode');
   next.roundingIncrement = clampInt(next.roundingIncrement, 1, 480, current.roundingIncrement);
   if (!Number.isFinite(next.hourlyRate) || next.hourlyRate < 0) throw new HttpError(400, 'Invalid hourlyRate');
+  next.defaultDetailedInvoice = next.defaultDetailedInvoice !== false;
+  next.defaultDetailedTimeLog = next.defaultDetailedTimeLog !== false;
   // A D1 row has a hard size ceiling; a logo is meant to be a small mark, not a photo.
   if (next.logoDataUrl.length > 512 * 1024) throw new HttpError(413, 'Logo too large (max ~512KB encoded)');
   if (next.logoDataUrl !== '' && !/^data:image\/(png|jpeg|gif|svg\+xml|webp);base64,/.test(next.logoDataUrl)) {
@@ -106,14 +113,16 @@ export async function saveSettings(
          timezone = ?, invoice_period_day = ?, invoice_prefix = ?, invoice_start_seq = ?,
          invoice_start_month = ?, period_label_mode = ?, logo_data_url = ?, company_name = ?,
          company_address = ?, client_name = ?, client_address = ?, currency = ?, hourly_rate = ?,
-         invoice_footer = ?, rounding_mode = ?, rounding_increment = ?, updated_at = ?
+         invoice_footer = ?, rounding_mode = ?, rounding_increment = ?,
+         default_detailed_invoice = ?, default_detailed_time_log = ?, updated_at = ?
        WHERE id = 1`,
     )
     .bind(
       next.timezone, next.invoicePeriodDay, next.invoicePrefix, next.invoiceStartSeq,
       next.invoiceStartMonth, next.periodLabelMode, next.logoDataUrl, next.companyName,
       next.companyAddress, next.clientName, next.clientAddress, next.currency, next.hourlyRate,
-      next.invoiceFooter, next.roundingMode, next.roundingIncrement, next.updatedAt,
+      next.invoiceFooter, next.roundingMode, next.roundingIncrement,
+      next.defaultDetailedInvoice ? 1 : 0, next.defaultDetailedTimeLog ? 1 : 0, next.updatedAt,
     )
     .run();
 

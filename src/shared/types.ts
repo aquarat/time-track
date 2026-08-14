@@ -34,7 +34,25 @@ export interface Settings {
   roundingMode: RoundingMode;
   roundingIncrement: number;
 
+  /** Starting state of the "Detailed invoice" toggle on the invoice document. */
+  defaultDetailedInvoice: boolean;
+  /** Starting state of the "Detailed time log" toggle on the invoice document. */
+  defaultDetailedTimeLog: boolean;
+
   updatedAt: number;
+}
+
+/**
+ * How one rendering of an invoice is laid out.
+ *
+ * Chosen per render and never stored — the document is always reproducible from
+ * the settings plus the URL that produced it.
+ */
+export interface InvoiceLayout {
+  /** false collapses every line item into a single summary line. */
+  detailedInvoice: boolean;
+  /** false omits the day-by-day log entirely. */
+  detailedTimeLog: boolean;
 }
 
 export interface Period {

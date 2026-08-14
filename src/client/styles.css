@@ -825,6 +825,12 @@ legend {
   margin: 0 0 16px 27px;
 }
 
+.fieldset-intro {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
