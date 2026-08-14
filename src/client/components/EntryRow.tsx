@@ -1,20 +1,23 @@
 import { useState } from 'react';
-import type { Entry } from '../../shared/types';
+import type { Client, Entry } from '../../shared/types';
 import { formatClock, formatCompact, fromZonedParts, toZonedParts } from '../../shared/time';
 import { api } from '../api';
 import { PencilIcon, PlayIcon, TrashIcon } from './Icons';
+import { ClientPicker } from './ClientPicker';
 
 interface Props {
   entry: Entry;
+  clients: Client[];
   tz: string;
   now: number;
-  onResume: (description: string) => void;
+  onResume: (description: string, clientId: string) => void;
   onChanged: () => Promise<void> | void;
 }
 
-export function EntryRow({ entry, tz, now, onResume, onChanged }: Props) {
+export function EntryRow({ entry, clients, tz, now, onResume, onChanged }: Props) {
   const [editing, setEditing] = useState(false);
   const [description, setDescription] = useState(entry.description);
+  const [clientId, setClientId] = useState(entry.clientId);
   const [startText, setStartText] = useState(() => formatClock(entry.startedAt, tz));
   const [endText, setEndText] = useState(() =>
     entry.endedAt === null ? '' : formatClock(entry.endedAt, tz),
@@ -27,6 +30,7 @@ export function EntryRow({ entry, tz, now, onResume, onChanged }: Props) {
 
   const openEditor = () => {
     setDescription(entry.description);
+    setClientId(entry.clientId);
     setStartText(formatClock(entry.startedAt, tz));
     setEndText(entry.endedAt === null ? '' : formatClock(entry.endedAt, tz));
     setError(null);
@@ -51,7 +55,7 @@ export function EntryRow({ entry, tz, now, onResume, onChanged }: Props) {
         if (endedAt < startedAt) endedAt += 24 * 3600_000;
       }
 
-      await api.updateEntry(entry.id, { description, startedAt, endedAt });
+      await api.updateEntry(entry.id, { clientId, description, startedAt, endedAt });
       setEditing(false);
       await onChanged();
     } catch (e) {
@@ -76,6 +80,7 @@ export function EntryRow({ entry, tz, now, onResume, onChanged }: Props) {
   if (editing) {
     return (
       <div className="entry-row editing">
+        <ClientPicker clients={clients} value={clientId} onChange={setClientId} compact />
         <input
           className="entry-desc-input"
           value={description}
@@ -116,6 +121,13 @@ export function EntryRow({ entry, tz, now, onResume, onChanged }: Props) {
   return (
     <div className={`entry-row${running ? ' running' : ''}`}>
       <button type="button" className="entry-desc" onClick={openEditor} title="Edit this entry">
+        {clients.length > 1 && (
+          <span
+            className="client-dot"
+            style={{ background: clients.find((c) => c.id === entry.clientId)?.colour }}
+            title={clients.find((c) => c.id === entry.clientId)?.name}
+          />
+        )}
         {entry.description || <span className="muted">No description</span>}
       </button>
       <span className="entry-times">
@@ -126,7 +138,7 @@ export function EntryRow({ entry, tz, now, onResume, onChanged }: Props) {
         <button
           type="button"
           title="Start a new timer with this description"
-          onClick={() => onResume(entry.description)}
+          onClick={() => onResume(entry.description, entry.clientId)}
           disabled={busy}
           aria-label="Resume this task"
         >

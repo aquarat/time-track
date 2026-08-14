@@ -33,7 +33,7 @@ function weekday(dateKey: string): string {
 }
 
 export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): string {
-  const { period, settings: s, details } = invoice;
+  const { period, config: s, details } = invoice;
   const currency = s.currency;
   const showRates = s.hourlyRate > 0;
 

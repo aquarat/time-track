@@ -7,3 +7,6 @@ dist/
 
 # Toggl exports (client billing data)
 Toggl_time_entries_*.csv
+
+# Local D1 backups (client billing data)
+backups/

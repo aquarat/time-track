@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Entry, Settings } from '../../shared/types';
+import type { Client, Entry, Settings } from '../../shared/types';
 import {
   MONTH_NAMES,
   addDaysUtc,
@@ -20,17 +20,22 @@ import { ManualEntryForm } from '../components/ManualEntryForm';
 import { EntryModal } from '../components/EntryModal';
 import { Toast } from '../components/Toast';
 import { applyTimerFavicon } from '../favicon';
+import { ClientPicker } from '../components/ClientPicker';
 
 type View = 'day' | 'week' | 'month';
 
 interface Props {
   settings: Settings;
+  clients: Client[];
 }
 
-export function TimerPage({ settings }: Props) {
+export function TimerPage({ settings, clients }: Props) {
   const tz = settings.timezone;
 
   const [description, setDescription] = useState('');
+  // Which client a newly started timer is attributed to. Follows the running
+  // entry while one exists, so the picker always shows what is being tracked.
+  const [clientId, setClientId] = useState(settings.defaultClientId);
   const [running, setRunning] = useState<Entry | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [view, setView] = useState<View>('day');
@@ -60,6 +65,7 @@ export function TimerPage({ settings }: Props) {
     if (id !== shownEntryId.current) {
       shownEntryId.current = id;
       setDescription(running?.description ?? '');
+      if (running) setClientId(running.clientId);
     }
   }, [running]);
 
@@ -93,6 +99,23 @@ export function TimerPage({ settings }: Props) {
     return () => window.removeEventListener('focus', onFocus);
   }, [reload]);
 
+  const changeClient = useCallback(
+    async (next: string) => {
+      setClientId(next);
+      // While a timer runs the picker edits that entry rather than setting a
+      // default for the next one.
+      if (running && running.clientId !== next) {
+        try {
+          await api.updateEntry(running.id, { clientId: next });
+          await reload();
+        } catch (e) {
+          setError((e as Error).message);
+        }
+      }
+    },
+    [reload, running],
+  );
+
   /** Write the box back to the running entry, if it has drifted from it. */
   const flushDescription = useCallback(async () => {
     if (!running || description === running.description) return;
@@ -114,13 +137,13 @@ export function TimerPage({ settings }: Props) {
 
   const start = useCallback(async () => {
     try {
-      const { entry } = await api.startTimer(description);
+      const { entry } = await api.startTimer(description, clientId);
       setRunning(entry);
       await reload();
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [description, reload]);
+  }, [clientId, description, reload]);
 
   const stop = useCallback(async () => {
     try {
@@ -137,9 +160,9 @@ export function TimerPage({ settings }: Props) {
   const toggle = useCallback(() => (running ? void stop() : void start()), [running, start, stop]);
 
   const resume = useCallback(
-    async (text: string) => {
+    async (text: string, entryClientId: string) => {
       try {
-        const { entry } = await api.startTimer(text);
+        const { entry } = await api.startTimer(text, entryClientId);
         setRunning(entry);
         setAnchor(Date.now());
         setView('day');
@@ -197,6 +220,12 @@ export function TimerPage({ settings }: Props) {
           onFlush={() => void flushDescription()}
           running={running !== null}
           inputRef={inputRef}
+        />
+        <ClientPicker
+          clients={clients}
+          value={clientId}
+          onChange={(id) => void changeClient(id)}
+          aria-label="Client for this timer"
         />
         <div className="timer-clock">{formatDuration(runningSeconds)}</div>
         <button
@@ -257,6 +286,7 @@ export function TimerPage({ settings }: Props) {
         ) : (
           <Timeline
             days={columns}
+            clients={clients}
             tz={tz}
             now={tick}
             // Handles are only offered where blocks are wide enough to grab.
@@ -283,6 +313,8 @@ export function TimerPage({ settings }: Props) {
           <ManualEntryForm
             tz={tz}
             defaultDate={dateKey(range.from, tz)}
+            clients={clients}
+            defaultClientId={clientId}
             onCreated={async () => {
               setShowManual(false);
               await reload();
@@ -302,6 +334,7 @@ export function TimerPage({ settings }: Props) {
               <EntryRow
                 key={item.entry.id}
                 entry={item.entry}
+                clients={clients}
                 tz={tz}
                 now={tick}
                 onResume={resume}
@@ -322,6 +355,7 @@ export function TimerPage({ settings }: Props) {
       {editing && (
         <EntryModal
           entry={editing}
+          clients={clients}
           tz={tz}
           now={tick}
           onSave={(patch) => saveEntry(editing.id, patch)}

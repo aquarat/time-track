@@ -1,15 +1,17 @@
 /**
  * Invoice derivation.
  *
- * The whole point of this app: an invoice is a pure function of (settings, entries).
+ * The whole point of this app: an invoice is a pure function of (config, entries).
  * Nothing about an invoice is stored or chosen per-run — the period boundaries, the
- * sequence number and the rounding all fall out of the settings, so the same month
+ * sequence number and the rounding all fall out of the config, so the same month
  * always produces the same document.
  */
 
 import type {
+  Client,
   Entry,
   Invoice,
+  InvoiceConfig,
   InvoiceDayDetail,
   InvoiceExtra,
   InvoiceLine,
@@ -28,6 +30,42 @@ import {
   monthLabel,
   parseMonthKey,
 } from './time';
+
+/**
+ * Merge the global settings with one client into the flat shape the invoice
+ * maths and the document renderer consume.
+ */
+export function invoiceConfig(settings: Settings, client: Client): InvoiceConfig {
+  return {
+    timezone: settings.timezone,
+
+    invoicePeriodDay: client.invoicePeriodDay,
+    invoicePrefix: client.invoicePrefix,
+    invoiceStartSeq: client.invoiceStartSeq,
+    invoiceStartMonth: client.invoiceStartMonth,
+    periodLabelMode: client.periodLabelMode,
+
+    logoDataUrl: settings.logoDataUrl,
+    companyName: settings.companyName,
+    companyAddress: settings.companyAddress,
+    clientName: client.name,
+    clientAddress: client.address,
+
+    currency: client.currency,
+    hourlyRate: client.hourlyRate,
+    invoiceFooter: client.invoiceFooter,
+    summaryServiceDescription: client.summaryServiceDescription,
+
+    roundingMode: client.roundingMode,
+    roundingIncrement: client.roundingIncrement,
+
+    defaultDetailedInvoice: client.defaultDetailedInvoice,
+    defaultDetailedTimeLog: client.defaultDetailedTimeLog,
+
+    clientId: client.id,
+    clientSlug: client.slug,
+  };
+}
 
 export const NO_DESCRIPTION = '(no description)';
 
@@ -49,23 +87,23 @@ function cutover(year: number, month: number, periodDay: number, tz: string): nu
  * default) "January 2026" runs 26 Jan → 26 Feb; under 'end' it runs 26 Dec →
  * 26 Jan. Both produce the same set of boundaries, only the labels shift.
  */
-export function periodAt(settings: Settings, i: number): Period {
-  const start = parseMonthKey(settings.invoiceStartMonth);
+export function periodAt(config: InvoiceConfig, i: number): Period {
+  const start = parseMonthKey(config.invoiceStartMonth);
   const labelMonth = addMonths(start.year, start.month, i);
-  const day = settings.invoicePeriodDay;
-  const tz = settings.timezone;
+  const day = config.invoicePeriodDay;
+  const tz = config.timezone;
 
-  const startsAt = settings.periodLabelMode === 'end' ? addMonths(labelMonth.year, labelMonth.month, -1) : labelMonth;
+  const startsAt = config.periodLabelMode === 'end' ? addMonths(labelMonth.year, labelMonth.month, -1) : labelMonth;
   const endsAt = addMonths(startsAt.year, startsAt.month, 1);
 
-  const sequence = settings.invoiceStartSeq + i;
+  const sequence = config.invoiceStartSeq + i;
   return {
     key: monthKey(labelMonth.year, labelMonth.month),
     label: monthLabel(labelMonth.year, labelMonth.month),
     startUtc: cutover(startsAt.year, startsAt.month, day, tz),
     endUtc: cutover(endsAt.year, endsAt.month, day, tz),
     sequence,
-    invoiceNumber: `${settings.invoicePrefix}${sequence}`,
+    invoiceNumber: `${config.invoicePrefix}${sequence}`,
   };
 }
 
@@ -76,10 +114,10 @@ export function periodAt(settings: Settings, i: number): Period {
  * always listed and always billable-to-date. Capped so a misconfigured start
  * month can't spin.
  */
-export function listPeriods(settings: Settings, now: number): Period[] {
+export function listPeriods(config: InvoiceConfig, now: number): Period[] {
   const out: Period[] = [];
   for (let i = 0; i < 600; i++) {
-    const p = periodAt(settings, i);
+    const p = periodAt(config, i);
     if (p.startUtc > now) break;
     out.push(p);
   }
@@ -87,12 +125,12 @@ export function listPeriods(settings: Settings, now: number): Period[] {
 }
 
 /** Find a period by its "YYYY-MM" key, or null if it is outside the configured range. */
-export function findPeriod(settings: Settings, key: string, now: number): Period | null {
-  const start = parseMonthKey(settings.invoiceStartMonth);
+export function findPeriod(config: InvoiceConfig, key: string, now: number): Period | null {
+  const start = parseMonthKey(config.invoiceStartMonth);
   const target = parseMonthKey(key);
   const i = (target.year * 12 + target.month) - (start.year * 12 + start.month);
   if (i < 0) return null;
-  const p = periodAt(settings, i);
+  const p = periodAt(config, i);
   return p.key === key && p.startUtc <= now ? p : null;
 }
 
@@ -131,12 +169,12 @@ function normaliseDescription(description: string): string {
  */
 export function buildInvoice(
   period: Period,
-  settings: Settings,
+  config: InvoiceConfig,
   entries: Entry[],
   now: number,
   extras: InvoiceExtra[] = [],
 ): Invoice {
-  const tz = settings.timezone;
+  const tz = config.timezone;
   const relevant = entries.filter((e) => secondsInWindow(e, period.startUtc, period.endUtc, now) > 0);
 
   const byDescription = new Map<string, number>();
@@ -167,14 +205,14 @@ export function buildInvoice(
 
   const lines: InvoiceLine[] = [...byDescription.entries()]
     .map(([description, rawSeconds]) => {
-      const billedSeconds = roundSeconds(rawSeconds, settings.roundingMode, settings.roundingIncrement);
+      const billedSeconds = roundSeconds(rawSeconds, config.roundingMode, config.roundingIncrement);
       const billedHours = billedSeconds / 3600;
       return {
         description,
         rawSeconds,
         billedSeconds,
         billedHours,
-        amount: round2(billedHours * settings.hourlyRate),
+        amount: round2(billedHours * config.hourlyRate),
       };
     })
     .sort((a, b) => b.billedSeconds - a.billedSeconds || a.description.localeCompare(b.description));
@@ -191,7 +229,7 @@ export function buildInvoice(
 
   return {
     period,
-    settings,
+    config,
     lines,
     details,
     extras,
@@ -208,12 +246,12 @@ export function buildInvoice(
 
 export function summarisePeriod(
   period: Period,
-  settings: Settings,
+  config: InvoiceConfig,
   entries: Entry[],
   now: number,
   extras: InvoiceExtra[] = [],
 ): PeriodSummary {
-  const invoice = buildInvoice(period, settings, entries, now, extras);
+  const invoice = buildInvoice(period, config, entries, now, extras);
   return {
     ...period,
     rawSeconds: invoice.rawSeconds,
@@ -238,9 +276,9 @@ export const DEFAULT_SUMMARY_SERVICE_DESCRIPTION = 'Software development service
  * where the end is the exclusive cut-over, matching how the period is defined
  * rather than the inclusive last day shown in the document header.
  */
-export function summaryLineDescription(period: Period, settings: Settings): string {
-  const service = settings.summaryServiceDescription.trim() || DEFAULT_SUMMARY_SERVICE_DESCRIPTION;
-  const tz = settings.timezone;
+export function summaryLineDescription(period: Period, config: InvoiceConfig): string {
+  const service = config.summaryServiceDescription.trim() || DEFAULT_SUMMARY_SERVICE_DESCRIPTION;
+  const tz = config.timezone;
   return `${service} - ${formatLongDate(period.startUtc, tz)} to ${formatLongDate(period.endUtc, tz)}`;
 }
 
@@ -254,7 +292,7 @@ export function summaryLineDescription(period: Period, settings: Settings): stri
  */
 export function summaryLine(invoice: Invoice): InvoiceLine {
   return {
-    description: summaryLineDescription(invoice.period, invoice.settings),
+    description: summaryLineDescription(invoice.period, invoice.config),
     rawSeconds: invoice.rawSeconds,
     billedSeconds: invoice.billedSeconds,
     billedHours: invoice.billedHours,
@@ -285,14 +323,14 @@ export function formatHours(seconds: number): string {
   return (seconds / 3600).toFixed(2);
 }
 
-export function describeRounding(settings: Settings): string {
-  if (settings.roundingMode === 'exact') return 'Exact time, no rounding';
+export function describeRounding(config: InvoiceConfig): string {
+  if (config.roundingMode === 'exact') return 'Exact time, no rounding';
   const unit =
-    settings.roundingIncrement === 60
+    config.roundingIncrement === 60
       ? 'hour'
-      : settings.roundingIncrement === 30
+      : config.roundingIncrement === 30
         ? 'half hour'
-        : `${settings.roundingIncrement} minutes`;
-  const verb = { up: 'Rounded up', down: 'Rounded down', nearest: 'Rounded to the nearest' }[settings.roundingMode];
-  return settings.roundingMode === 'nearest' ? `${verb} ${unit}` : `${verb} to the nearest ${unit}`;
+        : `${config.roundingIncrement} minutes`;
+  const verb = { up: 'Rounded up', down: 'Rounded down', nearest: 'Rounded to the nearest' }[config.roundingMode];
+  return config.roundingMode === 'nearest' ? `${verb} ${unit}` : `${verb} to the nearest ${unit}`;
 }

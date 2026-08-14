@@ -28,6 +28,12 @@ tests/         invoice + calendar maths
 `src/shared` is imported by both the Worker and the browser, so the invoice you see in the
 settings preview is computed by exactly the same code that renders the final document.
 
+**`InvoiceConfig`** is the seam that makes multiple clients cheap. Every invoice function
+takes one flat object whose field names are the ones they used when there was a single
+client; `invoiceConfig(settings, client)` assembles it from the global row plus one client.
+Adding clients therefore did not require rewriting the invoice maths or the document
+renderer — only changing what gets passed in.
+
 ## Data model
 
 Two tables, both in D1 (`migrations/0001_init.sql`).
@@ -46,9 +52,21 @@ A partial index on `ended_at WHERE ended_at IS NULL` keeps "is a timer running?"
 lookup. At most one row may have `ended_at IS NULL`; starting a timer, or reopening an
 entry via `PATCH`, closes any other open row first.
 
-**`settings`** — a single row pinned by `CHECK (id = 1)`, holding everything on the invoice
-settings page. There is no users table: the app is single-tenant by construction, and
-identity is handled entirely by Cloudflare Access.
+**`clients`** — one row per billable client: identity (`slug`, `name`, `address`, `colour`),
+invoice series (`invoice_period_day`, `invoice_prefix`, `invoice_start_seq`,
+`invoice_start_month`, `period_label_mode`), terms (`currency`, `hourly_rate`, rounding) and
+document defaults (footer, summary wording, layout). Each client's invoice series is
+independent of every other's.
+
+**`settings`** — a single row pinned by `CHECK (id = 1)`, holding only what belongs to you
+rather than to a client: timezone, logo, your name and address, and `default_client_id`.
+There is no users table: the app is single-tenant by construction, and identity is handled
+entirely by Cloudflare Access.
+
+> Migration `0004` deliberately left the old client-specific columns on `settings` in place,
+> unread. That kept the migration purely additive, so the previous Worker version still runs
+> against the current schema and `wrangler rollback` remains a complete rollback. They can be
+> dropped in a later migration.
 
 **`invoice_extras`** — hand-entered line items, keyed by `period_key` (`"YYYY-MM"`, the same
 identifier the invoice URL uses). Amounts may be negative, which is how a discount or credit
@@ -247,6 +265,23 @@ Caveat on how this was checked: it was measured in Chromium under iPhone emulati
 WebKit** — the engine could not be installed on the development machine. The fixes above
 target documented Safari behaviours, but if something looks wrong on an actual device,
 that gap is the reason.
+
+## Clients
+
+Each client has its own invoice series, rate, currency, period day, rounding and payment
+terms, and its own colour in the calendar. Time entries belong to exactly one client, and
+every surface that creates or edits an entry — the timer bar, the manual entry form, the
+edit modal, the inline row editor and the CSV import — carries a client selector. The
+selectors hide themselves when only one client exists, so the single-client case is
+unchanged.
+
+`Settings → Default client` decides where new entries are attributed and which client the
+invoice list opens on. There is no delete: a client with invoices behind it should not
+vanish.
+
+Invoice URLs are `/invoice/<client-slug>/<period>`. The old `/invoice/<period>` form still
+works — it 301s to the default client, so bookmarks made before clients existed resolve.
+A client's slug is editable, but changing it breaks links to invoices already sent.
 
 ## Editing time
 

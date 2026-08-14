@@ -1,19 +1,21 @@
 import { useRef, useState } from 'react';
-import type { Settings } from '../../shared/types';
+import type { Client, Settings } from '../../shared/types';
 import type { ImportReport } from '../../shared/togglCsv';
 import { formatCompact } from '../../shared/time';
 import { api } from '../api';
 
 interface Props {
   settings: Settings;
+  clients: Client[];
 }
 
 const COMMON_ZONES = ['Etc/UTC', 'Europe/London', 'Africa/Johannesburg'];
 
-export function ImportPage({ settings }: Props) {
+export function ImportPage({ settings, clients }: Props) {
   const [csv, setCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
   const [timezone, setTimezone] = useState(settings.timezone);
+  const [clientId, setClientId] = useState(settings.defaultClientId);
   const [skipNonBillable, setSkipNonBillable] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -35,7 +37,7 @@ export function ImportPage({ settings }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await api.importCsv({ csv, timezone, skipNonBillable, dryRun });
+      const res = await api.importCsv({ csv, clientId, timezone, skipNonBillable, dryRun });
       setReport(res.report);
     } catch (e) {
       setError((e as Error).message);
@@ -79,6 +81,23 @@ export function ImportPage({ settings }: Props) {
             </small>
           )}
         </label>
+
+        {clients.length > 1 && (
+          <label>
+            <span>Import into</span>
+            <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <small>
+              Every row in the file is attributed to this client. Duplicate detection is per
+              client, so the same hour billed to two clients is two entries rather than a repeat.
+            </small>
+          </label>
+        )}
 
         <label>
           <span>The times in this file are local to</span>
@@ -127,17 +146,26 @@ export function ImportPage({ settings }: Props) {
         </div>
       </fieldset>
 
-      {report && <Report report={report} onCommit={() => void run(false)} busy={busy} />}
+      {report && (
+        <Report
+          report={report}
+          clientLabel={clients.length > 1 ? (clients.find((c) => c.id === clientId)?.name ?? null) : null}
+          onCommit={() => void run(false)}
+          busy={busy}
+        />
+      )}
     </div>
   );
 }
 
 function Report({
   report,
+  clientLabel,
   onCommit,
   busy,
 }: {
   report: ImportReport;
+  clientLabel: string | null;
   onCommit: () => void;
   busy: boolean;
 }) {
@@ -185,6 +213,12 @@ function Report({
             <td>Read as local to</td>
             <td className="mono">{report.timezone}</td>
           </tr>
+          {clientLabel && (
+            <tr>
+              <td>Imported into</td>
+              <td>{clientLabel}</td>
+            </tr>
+          )}
           {report.nonBillableIncluded > 0 && (
             <tr>
               <td>Marked non-billable</td>

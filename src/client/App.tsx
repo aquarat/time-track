@@ -1,24 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Settings } from '../shared/types';
+import type { Client, Settings } from '../shared/types';
 import { api } from './api';
 import { useRoute } from './router';
 import { TimerPage } from './pages/TimerPage';
-import { InvoiceSettingsPage } from './pages/InvoiceSettingsPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { ClientsPage } from './pages/ClientsPage';
 import { InvoicesPage } from './pages/InvoicesPage';
 import { ImportPage } from './pages/ImportPage';
-import { ClockIcon, DocumentIcon, GearIcon, UploadIcon } from './components/Icons';
+import { ClockIcon, DocumentIcon, GearIcon, UploadIcon, UsersIcon } from './components/Icons';
 import { applyTimerFavicon, watchColourScheme } from './favicon';
 
 const NAV = [
   { path: '/', label: 'Time tracker', Icon: ClockIcon },
   { path: '/invoices', label: 'Invoices', Icon: DocumentIcon },
-  { path: '/settings', label: 'Invoice settings', Icon: GearIcon },
+  { path: '/clients', label: 'Clients', Icon: UsersIcon },
+  { path: '/settings', label: 'Settings', Icon: GearIcon },
   { path: '/import', label: 'Import', Icon: UploadIcon },
 ];
 
 export function App() {
   const [path, navigate] = useRoute();
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [clients, setClients] = useState<Client[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -29,6 +32,7 @@ export function App() {
         .then((s) => {
           if (cancelled) return;
           setSettings(s.settings);
+          setClients(s.clients);
           applyTimerFavicon(s.running !== null);
         })
         .catch((e: Error) => {
@@ -96,12 +100,26 @@ export function App() {
       <main className="content">
         {error && <div className="banner error">{error}</div>}
         {!settings && !error && <div className="loading">Loading…</div>}
-        {settings && path === '/' && <TimerPage settings={settings} />}
-        {settings && path === '/invoices' && <InvoicesPage onNavigate={navigate} />}
-        {settings && path === '/settings' && (
-          <InvoiceSettingsPage settings={settings} onSaved={setSettings} />
+        {settings && path === '/' && <TimerPage settings={settings} clients={clients} />}
+        {settings && path === '/invoices' && (
+          <InvoicesPage
+            clients={clients}
+            defaultClientId={settings.defaultClientId}
+            onNavigate={navigate}
+          />
         )}
-        {settings && path === '/import' && <ImportPage settings={settings} />}
+        {settings && path === '/clients' && (
+          <ClientsPage settings={settings} clients={clients} onClientsChanged={setClients} />
+        )}
+        {settings && path === '/settings' && (
+          <SettingsPage
+            settings={settings}
+            clients={clients}
+            onSaved={setSettings}
+            onNavigate={navigate}
+          />
+        )}
+        {settings && path === '/import' && <ImportPage settings={settings} clients={clients} />}
         {settings && !NAV.some((n) => n.path === path) && (
           <div className="empty-state">
             <h1>Nothing here</h1>

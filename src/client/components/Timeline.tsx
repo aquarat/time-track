@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import type { Entry } from '../../shared/types';
+import type { Client, Entry } from '../../shared/types';
 import type { DayBucket } from '../pages/TimerPage';
 import {
   MONTH_NAMES,
@@ -25,6 +25,7 @@ interface DragState {
 
 interface Props {
   days: DayBucket[];
+  clients: Client[];
   tz: string;
   now: number;
   /** Enables the resize handles. Off outside the single-day view. */
@@ -41,7 +42,7 @@ interface Props {
  * 08:00–18:00, so a normal working day keeps a stable shape and an early start
  * or a late night simply extends it.
  */
-export function Timeline({ days, tz, now, resizable, onPickDay, onSelectEntry, onResize }: Props) {
+export function Timeline({ days, clients, tz, now, resizable, onPickDay, onSelectEntry, onResize }: Props) {
   const ordered = useMemo(() => [...days].sort((a, b) => a.key.localeCompare(b.key)), [days]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -155,6 +156,10 @@ export function Timeline({ days, tz, now, resizable, onPickDay, onSelectEntry, o
                   const height = (to - from) / HOUR_MS / span;
                   const isRunning = entry.endedAt === null;
                   const lane = lanes[i];
+                  // Each client gets its own colour so two adjacent blocks for
+                  // different clients are distinguishable at a glance.
+                  const colour = clients.find((c) => c.id === entry.clientId)?.colour;
+                  const clientLabel = clients.find((c) => c.id === entry.clientId)?.name;
 
                   // Only an unclipped, finished entry may be resized: a slice of an
                   // overnight entry does not carry that entry's real boundaries, and a
@@ -175,8 +180,11 @@ export function Timeline({ days, tz, now, resizable, onPickDay, onSelectEntry, o
                         height: `max(${height * 100}%, 4px)`,
                         left: `${(lane.index / lane.total) * 100}%`,
                         width: `${(1 / lane.total) * 100}%`,
+                        ...(colour ? { background: colour } : {}),
                       }}
-                      title={`${entry.description || 'No description'}\n${formatClock(from, tz)}–${
+                      title={`${entry.description || 'No description'}${
+                        clients.length > 1 && clientLabel ? `\n${clientLabel}` : ''
+                      }\n${formatClock(from, tz)}–${
                         isRunning ? 'now' : formatClock(to, tz)
                       } (${formatCompact((to - from) / 1000)})`}
                       onClick={() => {

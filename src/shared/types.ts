@@ -3,6 +3,7 @@ export type PeriodLabelMode = 'start' | 'end';
 
 export interface Entry {
   id: string;
+  clientId: string;
   description: string;
   startedAt: number;
   /** null while the timer is running. */
@@ -11,13 +12,69 @@ export interface Entry {
   updatedAt: number;
 }
 
-export interface Settings {
-  timezone: string;
+/**
+ * One billable client: who they are, how their invoices are numbered, and on
+ * what terms. Each client's invoice series is independent of every other.
+ */
+export interface Client {
+  id: string;
+  /** URL segment. Editable, but changing it breaks links to sent invoices. */
+  slug: string;
+  name: string;
+  address: string;
+  /** Distinguishes this client's blocks in the calendar. */
+  colour: string;
 
   invoicePeriodDay: number;
   invoicePrefix: string;
   invoiceStartSeq: number;
   /** "YYYY-MM" */
+  invoiceStartMonth: string;
+  periodLabelMode: PeriodLabelMode;
+
+  currency: string;
+  hourlyRate: number;
+  roundingMode: RoundingMode;
+  roundingIncrement: number;
+
+  invoiceFooter: string;
+  /** Wording of the single line on a summary invoice. */
+  summaryServiceDescription: string;
+  /** Starting state of the "Detailed invoice" toggle on the invoice document. */
+  defaultDetailedInvoice: boolean;
+  /** Starting state of the "Detailed time log" toggle on the invoice document. */
+  defaultDetailedTimeLog: boolean;
+
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Settings that belong to you rather than to any one client. */
+export interface Settings {
+  timezone: string;
+  logoDataUrl: string;
+  companyName: string;
+  companyAddress: string;
+  /** Which client new time entries and the invoice list default to. */
+  defaultClientId: string;
+  updatedAt: number;
+}
+
+/**
+ * Everything one invoice needs, assembled from the global settings plus one
+ * client.
+ *
+ * A flat merge rather than passing both objects around: the field names are the
+ * ones the invoice maths and the document renderer already used when there was a
+ * single client, so those modules did not have to be rewritten to gain clients.
+ * Build it with `invoiceConfig()` — never by hand.
+ */
+export interface InvoiceConfig {
+  timezone: string;
+
+  invoicePeriodDay: number;
+  invoicePrefix: string;
+  invoiceStartSeq: number;
   invoiceStartMonth: string;
   periodLabelMode: PeriodLabelMode;
 
@@ -30,18 +87,17 @@ export interface Settings {
   currency: string;
   hourlyRate: number;
   invoiceFooter: string;
-  /** Wording of the single line on a summary invoice. */
   summaryServiceDescription: string;
 
   roundingMode: RoundingMode;
   roundingIncrement: number;
 
-  /** Starting state of the "Detailed invoice" toggle on the invoice document. */
   defaultDetailedInvoice: boolean;
-  /** Starting state of the "Detailed time log" toggle on the invoice document. */
   defaultDetailedTimeLog: boolean;
 
-  updatedAt: number;
+  /** Carried through so a rendered invoice can link back to its client. */
+  clientId: string;
+  clientSlug: string;
 }
 
 /**
@@ -78,6 +134,7 @@ export interface Period {
  */
 export interface InvoiceExtra {
   id: string;
+  clientId: string;
   periodKey: string;
   description: string;
   amount: number;
@@ -104,7 +161,7 @@ export interface InvoiceDayDetail {
 
 export interface Invoice {
   period: Period;
-  settings: Settings;
+  config: InvoiceConfig;
   lines: InvoiceLine[];
   details: InvoiceDayDetail[];
   extras: InvoiceExtra[];

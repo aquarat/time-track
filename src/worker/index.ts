@@ -1,5 +1,5 @@
-import type { Entry, InvoiceLayout, Settings } from '../shared/types';
-import { buildInvoice, findPeriod, listPeriods, summarisePeriod } from '../shared/invoice';
+import type { Client, Entry, InvoiceLayout, Settings } from '../shared/types';
+import { buildInvoice, findPeriod, invoiceConfig, listPeriods, summarisePeriod } from '../shared/invoice';
 import { renderInvoiceHtml } from './invoiceHtml';
 import { requireAccess } from './access';
 import { runImport } from './import';
@@ -7,6 +7,11 @@ import type { ImportOptions } from './import';
 import {
   HttpError,
   addExtra,
+  createClient,
+  getClient,
+  listClients,
+  resolveClient,
+  updateClient,
   deleteEntry,
   deleteExtra,
   listAllExtras,
@@ -76,13 +81,36 @@ async function handleApi(request: Request, env: Env, url: URL, now: number): Pro
 
   // --- timer state --------------------------------------------------------
   if (path === '/state' && method === 'GET') {
-    const settings = await getSettings(db);
-    return { settings, running: await getRunningEntry(db), now };
+    const [settings, clients, running] = await Promise.all([
+      getSettings(db),
+      listClients(db),
+      getRunningEntry(db),
+    ]);
+    return { settings, clients, running, now };
+  }
+
+  // --- clients ------------------------------------------------------------
+  if (path === '/clients') {
+    if (method === 'GET') return { clients: await listClients(db) };
+    if (method === 'POST') {
+      const body = (await readJson(request)) as Partial<Client>;
+      return { client: await createClient(db, body, now) };
+    }
+    throw new HttpError(405, 'Method not allowed');
+  }
+
+  const clientMatch = /^\/clients\/([A-Za-z0-9-]+)$/.exec(path);
+  if (clientMatch && method === 'PATCH') {
+    const body = (await readJson(request)) as Partial<Client>;
+    return { client: await updateClient(db, clientMatch[1], body, now) };
   }
 
   if (path === '/timer/start' && method === 'POST') {
-    const body = (await readJson(request)) as { description?: string };
-    return { entry: await startEntry(db, body.description ?? '', now) };
+    const body = (await readJson(request)) as { description?: string; clientId?: string };
+    const settings = await getSettings(db);
+    const clientId = body.clientId ?? settings.defaultClientId;
+    if (!(await getClient(db, clientId))) throw new HttpError(400, 'Unknown client');
+    return { entry: await startEntry(db, clientId, body.description ?? '', now) };
   }
 
   if (path === '/timer/stop' && method === 'POST') {
@@ -95,11 +123,14 @@ async function handleApi(request: Request, env: Env, url: URL, now: number): Pro
       const from = numberParam(url, 'from');
       const to = numberParam(url, 'to');
       if (from === null || to === null) throw new HttpError(400, 'from and to query params are required');
-      return { entries: await listEntries(db, from, to), now };
+      // No client filter by default: the calendar shows every client's day.
+      const clientId = url.searchParams.get('clientId') ?? undefined;
+      return { entries: await listEntries(db, from, to, clientId), now };
     }
     if (method === 'POST') {
       // Manual entry: a completed block of time added after the fact.
       const body = (await readJson(request)) as {
+        clientId?: string;
         description?: string;
         startedAt?: number;
         endedAt?: number;
@@ -110,8 +141,12 @@ async function handleApi(request: Request, env: Env, url: URL, now: number): Pro
       const startedAt = body.startedAt as number;
       const endedAt = body.endedAt as number;
       if (endedAt < startedAt) throw new HttpError(400, 'Entry cannot end before it starts');
+      const settings = await getSettings(db);
+      const clientId = body.clientId ?? settings.defaultClientId;
+      if (!(await getClient(db, clientId))) throw new HttpError(400, 'Unknown client');
       const entry: Entry = {
         id: crypto.randomUUID(),
+        clientId,
         description: (body.description ?? '').trim(),
         startedAt,
         endedAt,
@@ -129,6 +164,7 @@ async function handleApi(request: Request, env: Env, url: URL, now: number): Pro
     const id = entryMatch[1];
     if (method === 'PATCH') {
       const patch = (await readJson(request)) as {
+        clientId?: string;
         description?: string;
         startedAt?: number;
         endedAt?: number | null;
@@ -144,15 +180,21 @@ async function handleApi(request: Request, env: Env, url: URL, now: number): Pro
 
   // --- import ------------------------------------------------------------
   if (path === '/import' && method === 'POST') {
-    const body = (await readJson(request)) as Partial<ImportOptions>;
+    const body = (await readJson(request)) as Partial<ImportOptions> & { clientId?: string };
     const settings = await getSettings(db);
+    const client = body.clientId
+      ? await getClient(db, body.clientId)
+      : await getClient(db, settings.defaultClientId);
+    if (!client) throw new HttpError(400, 'Unknown client');
+    const config = invoiceConfig(settings, client);
     return {
       report: await runImport(
         db,
-        settings,
+        config,
+        client,
         {
           csv: typeof body.csv === 'string' ? body.csv : '',
-          timezone: typeof body.timezone === 'string' ? body.timezone : settings.timezone,
+          timezone: typeof body.timezone === 'string' ? body.timezone : config.timezone,
           skipNonBillable: body.skipNonBillable === true,
           // Committing must be asked for explicitly; anything else previews.
           dryRun: body.dryRun !== false,
@@ -163,50 +205,61 @@ async function handleApi(request: Request, env: Env, url: URL, now: number): Pro
   }
 
   if (path === '/suggestions' && method === 'GET') {
-    return { suggestions: await suggestDescriptions(db, url.searchParams.get('q') ?? '') };
+    return {
+      suggestions: await suggestDescriptions(
+        db,
+        url.searchParams.get('q') ?? '',
+        url.searchParams.get('clientId'),
+      ),
+    };
   }
 
   // --- invoices -----------------------------------------------------------
   if (path === '/invoices' && method === 'GET') {
     const settings = await getSettings(db);
-    const periods = listPeriods(settings, now);
-    if (periods.length === 0) return { settings, periods: [], now };
+    const client = await resolveClient(db, url.searchParams.get('client'), settings);
+    const config = invoiceConfig(settings, client);
+    const periods = listPeriods(config, now);
+    if (periods.length === 0) return { config, client, periods: [], now };
 
     // One query spanning every period, then summarise in memory — cheaper than
     // a round trip per month and the dataset is a personal-scale time log.
     const earliest = periods[periods.length - 1].startUtc;
     const latest = periods[0].endUtc;
     const [entries, extrasByPeriod] = await Promise.all([
-      listEntries(db, earliest, latest),
-      listAllExtras(db),
+      listEntries(db, earliest, latest, client.id),
+      listAllExtras(db, client.id),
     ]);
 
     return {
-      settings,
+      config,
+      client,
       periods: periods.map((p) =>
-        summarisePeriod(p, settings, entries, now, extrasByPeriod.get(p.key) ?? []),
+        summarisePeriod(p, config, entries, now, extrasByPeriod.get(p.key) ?? []),
       ),
       now,
     };
   }
 
-  const invoiceMatch = /^\/invoices\/(\d{4}-\d{2})$/.exec(path);
+  const invoiceMatch = /^\/invoices\/([a-z0-9-]+)\/(\d{4}-\d{2})$/.exec(path);
   if (invoiceMatch && method === 'GET') {
-    return { invoice: await loadInvoice(env, invoiceMatch[1], now) };
+    return { invoice: await loadInvoice(env, invoiceMatch[1], invoiceMatch[2], now) };
   }
 
   throw new HttpError(404, 'Not found');
 }
 
-async function loadInvoice(env: Env, key: string, now: number) {
+async function loadInvoice(env: Env, clientSlug: string, key: string, now: number) {
   const settings = await getSettings(env.DB);
-  const period = findPeriod(settings, key, now);
-  if (!period) throw new HttpError(404, `No invoice period ${key}`);
+  const client = await resolveClient(env.DB, clientSlug, settings);
+  const config = invoiceConfig(settings, client);
+  const period = findPeriod(config, key, now);
+  if (!period) throw new HttpError(404, `No invoice period ${key} for ${client.name}`);
   const [entries, extras] = await Promise.all([
-    listEntries(env.DB, period.startUtc, period.endUtc),
-    listExtras(env.DB, key),
+    listEntries(env.DB, period.startUtc, period.endUtc, client.id),
+    listExtras(env.DB, client.id, key),
   ]);
-  return buildInvoice(period, settings, entries, now, extras);
+  return buildInvoice(period, config, entries, now, extras);
 }
 
 const TRUE_TOKENS = new Set(['1', 'true', 'on', 'yes']);
@@ -249,36 +302,53 @@ async function handleInvoiceRoutes(
 ): Promise<Response> {
   const method = request.method.toUpperCase();
 
-  const addMatch = /^\/invoice\/(\d{4}-\d{2})\/extras$/.exec(url.pathname);
+  // Old single-client URLs. Kept working by sending them to the default client,
+  // so invoices bookmarked before clients existed still resolve.
+  const legacy = /^\/invoice\/(\d{4}-\d{2})$/.exec(url.pathname);
+  if (legacy && method === 'GET') {
+    const settings = await getSettings(env.DB);
+    const client = await resolveClient(env.DB, null, settings);
+    return new Response(null, {
+      status: 301,
+      headers: { Location: `/invoice/${client.slug}/${legacy[1]}${url.search}` },
+    });
+  }
+
+  const addMatch = /^\/invoice\/([a-z0-9-]+)\/(\d{4}-\d{2})\/extras$/.exec(url.pathname);
   if (addMatch && method === 'POST') {
-    const key = addMatch[1];
+    const [, clientSlug, key] = addMatch;
     // Reject a post against a period that does not exist before writing anything.
-    await loadInvoice(env, key, now);
+    const invoice = await loadInvoice(env, clientSlug, key, now);
     const form = await request.formData();
     const amountText = String(form.get('amount') ?? '').trim();
     const amount = Number(amountText);
     if (amountText === '' || !Number.isFinite(amount)) {
       throw new HttpError(400, 'Amount must be a number');
     }
-    await addExtra(env.DB, key, String(form.get('description') ?? ''), amount, now);
-    return redirectToInvoice(key, form);
+    await addExtra(env.DB, invoice.config.clientId, key, String(form.get('description') ?? ''), amount, now);
+    return redirectToInvoice(clientSlug, key, form);
   }
 
-  const deleteMatch = /^\/invoice\/(\d{4}-\d{2})\/extras\/([A-Za-z0-9-]+)\/delete$/.exec(url.pathname);
+  const deleteMatch = /^\/invoice\/([a-z0-9-]+)\/(\d{4}-\d{2})\/extras\/([A-Za-z0-9-]+)\/delete$/.exec(
+    url.pathname,
+  );
   if (deleteMatch && method === 'POST') {
-    const [, key, id] = deleteMatch;
+    const [, clientSlug, key, id] = deleteMatch;
+    const invoice = await loadInvoice(env, clientSlug, key, now);
     const form = await request.formData();
-    if (!(await deleteExtra(env.DB, key, id))) throw new HttpError(404, 'Line item not found');
-    return redirectToInvoice(key, form);
+    if (!(await deleteExtra(env.DB, invoice.config.clientId, key, id))) {
+      throw new HttpError(404, 'Line item not found');
+    }
+    return redirectToInvoice(clientSlug, key, form);
   }
 
-  const pageMatch = /^\/invoice\/(\d{4}-\d{2})$/.exec(url.pathname);
+  const pageMatch = /^\/invoice\/([a-z0-9-]+)\/(\d{4}-\d{2})$/.exec(url.pathname);
   if (!pageMatch || method !== 'GET') return new Response('Not found', { status: 404 });
 
-  const invoice = await loadInvoice(env, pageMatch[1], now);
+  const invoice = await loadInvoice(env, pageMatch[1], pageMatch[2], now);
   const layout: InvoiceLayout = {
-    detailedInvoice: layoutFlag(url, 'detailed', invoice.settings.defaultDetailedInvoice),
-    detailedTimeLog: layoutFlag(url, 'timelog', invoice.settings.defaultDetailedTimeLog),
+    detailedInvoice: layoutFlag(url, 'detailed', invoice.config.defaultDetailedInvoice),
+    detailedTimeLog: layoutFlag(url, 'timelog', invoice.config.defaultDetailedTimeLog),
   };
   return new Response(renderInvoiceHtml(invoice, layout), {
     headers: {
@@ -289,7 +359,7 @@ async function handleInvoiceRoutes(
   });
 }
 
-function redirectToInvoice(key: string, form: FormData): Response {
+function redirectToInvoice(clientSlug: string, key: string, form: FormData): Response {
   const params = new URLSearchParams();
   for (const name of ['detailed', 'timelog']) {
     const value = form.get(name);
@@ -298,7 +368,7 @@ function redirectToInvoice(key: string, form: FormData): Response {
   const query = params.toString();
   return new Response(null, {
     status: 303,
-    headers: { Location: `/invoice/${key}${query ? `?${query}` : ''}` },
+    headers: { Location: `/invoice/${clientSlug}/${key}${query ? `?${query}` : ''}` },
   });
 }
 

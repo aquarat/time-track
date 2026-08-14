@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import type { Entry, Settings } from '../src/shared/types';
+import type { Client, Entry, InvoiceConfig, Settings } from '../src/shared/types';
 import {
   buildInvoice,
   findPeriod,
   listPeriods,
   periodAt,
+  invoiceConfig,
   roundSeconds,
   summarisePeriod,
   summaryLine,
@@ -15,28 +16,40 @@ import { fromZonedParts, snapToMinutes, startOfWeek, toZonedParts } from '../src
 const SAST = 'Africa/Johannesburg'; // UTC+2, no DST
 const LONDON = 'Europe/London'; // has DST
 
-const base: Settings = {
+const globalSettings: Settings = {
   timezone: SAST,
+  logoDataUrl: '',
+  companyName: 'Me',
+  companyAddress: '',
+  defaultClientId: 'client-a',
+  updatedAt: 0,
+};
+
+const clientA: Client = {
+  id: 'client-a',
+  slug: 'client-a',
+  name: 'Client',
+  address: '',
+  colour: '#2563eb',
   invoicePeriodDay: 26,
   invoicePrefix: 'TDC-TT-G2A-',
   invoiceStartSeq: 1,
   invoiceStartMonth: '2026-01',
   periodLabelMode: 'start',
-  logoDataUrl: '',
-  companyName: 'Me',
-  companyAddress: '',
-  clientName: 'Client',
-  clientAddress: '',
   currency: 'ZAR',
   hourlyRate: 100,
-  invoiceFooter: '',
-  summaryServiceDescription: 'Software development services',
   roundingMode: 'exact',
   roundingIncrement: 15,
+  invoiceFooter: '',
+  summaryServiceDescription: 'Software development services',
   defaultDetailedInvoice: true,
   defaultDetailedTimeLog: true,
+  createdAt: 0,
   updatedAt: 0,
 };
+
+/** The merged view every invoice function consumes. */
+const base: InvoiceConfig = invoiceConfig(globalSettings, clientA);
 
 const at = (y: number, m: number, d: number, h = 0, mi = 0, tz = SAST) =>
   fromZonedParts(y, m, d, h, mi, 0, tz);
@@ -379,6 +392,72 @@ describe('configurable summary wording', () => {
         'Software development services - 26 January 2026 to 26 February 2026',
       );
     }
+  });
+});
+
+describe('multiple clients', () => {
+  const now = at(2026, 8, 14, 10);
+
+  const clientB: Client = {
+    ...clientA,
+    id: 'client-b',
+    slug: 'northwind',
+    name: 'Northwind Trading',
+    invoicePeriodDay: 1,
+    invoicePrefix: 'NW-',
+    invoiceStartSeq: 100,
+    invoiceStartMonth: '2026-06',
+    currency: 'EUR',
+    hourlyRate: 75,
+  };
+  const configB = invoiceConfig(globalSettings, clientB);
+
+  test('each client numbers its own series independently', () => {
+    expect(periodAt(base, 0).invoiceNumber).toBe('TDC-TT-G2A-1');
+    expect(periodAt(configB, 0).invoiceNumber).toBe('NW-100');
+    expect(periodAt(configB, 3).invoiceNumber).toBe('NW-103');
+  });
+
+  test('period boundaries follow each client\'s own cut-over day', () => {
+    expect(periodAt(base, 0).startUtc).toBe(at(2026, 1, 26));
+    expect(periodAt(configB, 0).startUtc).toBe(at(2026, 6, 1));
+    expect(periodAt(configB, 0).endUtc).toBe(at(2026, 7, 1));
+  });
+
+  test('the same hours bill differently under each client\'s rate', () => {
+    const entries = [entry('x', 'Work', at(2026, 6, 3, 9), at(2026, 6, 3, 13))]; // 4h
+    // Client A's June period contains it; so does client B's.
+    const a = buildInvoice(periodAt(base, 4), base, entries, now);
+    const b = buildInvoice(periodAt(configB, 0), configB, entries, now);
+    expect(a.billedSeconds).toBe(4 * 3600);
+    expect(b.billedSeconds).toBe(4 * 3600);
+    expect(a.total).toBe(400); // 4h at 100
+    expect(b.total).toBe(300); // 4h at 75
+  });
+
+  test('the global timezone applies to every client', () => {
+    expect(base.timezone).toBe(SAST);
+    expect(configB.timezone).toBe(SAST);
+    const tokyo = invoiceConfig({ ...globalSettings, timezone: 'Asia/Tokyo' }, clientB);
+    expect(tokyo.timezone).toBe('Asia/Tokyo');
+    // Changing the global zone moves every client's boundaries together.
+    expect(periodAt(tokyo, 0).startUtc).not.toBe(periodAt(configB, 0).startUtc);
+  });
+
+  test('invoiceConfig takes identity from the client and the rest from settings', () => {
+    expect(configB.clientName).toBe('Northwind Trading');
+    expect(configB.clientId).toBe('client-b');
+    expect(configB.clientSlug).toBe('northwind');
+    expect(configB.companyName).toBe('Me'); // yours, not the client's
+    expect(configB.currency).toBe('EUR');
+  });
+
+  test('a client with no rate still produces a timesheet', () => {
+    const free = invoiceConfig(globalSettings, { ...clientB, hourlyRate: 0 });
+    const entries = [entry('x', 'Work', at(2026, 6, 3, 9), at(2026, 6, 3, 13))];
+    const invoice = buildInvoice(periodAt(free, 0), free, entries, now);
+    expect(invoice.billedSeconds).toBe(4 * 3600);
+    expect(invoice.total).toBe(0);
   });
 });
 

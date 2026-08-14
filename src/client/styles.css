@@ -1189,6 +1189,74 @@ legend {
 }
 
 
+/* --- clients -------------------------------------------------------------- */
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.page-head h1 {
+  margin: 0;
+}
+
+.client-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 7px;
+  flex: none;
+  vertical-align: baseline;
+}
+
+.client-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0 8px 0 10px;
+  background: var(--panel);
+  min-width: 0;
+}
+.client-picker select {
+  border: none;
+  background: transparent;
+  padding: 7px 4px 7px 0;
+  max-width: 170px;
+  cursor: pointer;
+}
+.client-picker select:focus {
+  outline: none;
+}
+.client-picker.compact select {
+  padding: 5px 4px 5px 0;
+  max-width: 130px;
+  font-size: 13px;
+}
+
+.colour-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.swatch.selected {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--panel);
+}
+
 /* --- modal ---------------------------------------------------------------- */
 
 .modal-backdrop {

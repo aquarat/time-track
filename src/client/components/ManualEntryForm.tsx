@@ -1,17 +1,22 @@
 import { useState } from 'react';
+import type { Client } from '../../shared/types';
 import { fromZonedParts } from '../../shared/time';
 import { api } from '../api';
+import { ClientPicker } from './ClientPicker';
 
 interface Props {
   tz: string;
   /** "YYYY-MM-DD" the form opens on. */
   defaultDate: string;
+  clients: Client[];
+  defaultClientId: string;
   onCreated: () => Promise<void> | void;
 }
 
 /** Log a block of time after the fact, for the timer you forgot to start. */
-export function ManualEntryForm({ tz, defaultDate, onCreated }: Props) {
+export function ManualEntryForm({ tz, defaultDate, clients, defaultClientId, onCreated }: Props) {
   const [description, setDescription] = useState('');
+  const [clientId, setClientId] = useState(defaultClientId);
   const [date, setDate] = useState(defaultDate);
   const [start, setStart] = useState('09:00');
   const [end, setEnd] = useState('17:00');
@@ -32,7 +37,7 @@ export function ManualEntryForm({ tz, defaultDate, onCreated }: Props) {
 
     setBusy(true);
     try {
-      await api.createEntry({ description, startedAt, endedAt });
+      await api.createEntry({ clientId, description, startedAt, endedAt });
       setDescription('');
       await onCreated();
     } catch (e) {
@@ -50,6 +55,7 @@ export function ManualEntryForm({ tz, defaultDate, onCreated }: Props) {
         value={description}
         onChange={(e) => setDescription(e.target.value)}
       />
+      <ClientPicker clients={clients} value={clientId} onChange={setClientId} compact />
       <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
       <input className="time-input" value={start} onChange={(e) => setStart(e.target.value)} aria-label="Start" />
       <span className="dash">–</span>

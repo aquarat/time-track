@@ -6,7 +6,7 @@
  * summary can never disagree with the result.
  */
 
-import type { Entry, Settings } from '../shared/types';
+import type { Client, Entry, InvoiceConfig } from '../shared/types';
 import { entryFingerprint, parseTogglCsv } from '../shared/togglCsv';
 import type { ImportReport, PeriodImpact, TogglRow } from '../shared/togglCsv';
 import { listPeriods } from '../shared/invoice';
@@ -25,7 +25,8 @@ const MAX_CSV_BYTES = 5 * 1024 * 1024;
 
 export async function runImport(
   db: D1Database,
-  settings: Settings,
+  config: InvoiceConfig,
+  client: Client,
   options: ImportOptions,
   now: number,
 ): Promise<ImportReport> {
@@ -36,7 +37,7 @@ export async function runImport(
     throw new HttpError(413, 'CSV is larger than 5MB');
   }
 
-  const timezone = options.timezone || settings.timezone;
+  const timezone = options.timezone || config.timezone;
   if (!isValidTimezone(timezone)) throw new HttpError(400, `Unknown timezone: ${timezone}`);
 
   const { rows, problems } = parseTogglCsv(options.csv, timezone);
@@ -55,7 +56,9 @@ export async function runImport(
   if (candidates.length > 0) {
     const from = Math.min(...candidates.map((r) => r.startedAt));
     const to = Math.max(...candidates.map((r) => r.endedAt)) + 1;
-    existing.push(...(await listEntries(db, from, to)));
+    // Duplicate detection is per client: the same hour billed to two different
+    // clients is two entries, not a repeat.
+    existing.push(...(await listEntries(db, from, to, client.id)));
     for (const e of existing) {
       existingFingerprints.add(entryFingerprint(e.startedAt, e.endedAt, e.description));
     }
@@ -92,7 +95,7 @@ export async function runImport(
     lastDate: sorted.length > 0 ? dateKey(sorted[sorted.length - 1].startedAt, timezone) : null,
     distinctDescriptions: new Set(fresh.map((r) => r.description)).size,
     overlaps: countOverlaps(sorted, existing),
-    periods: periodImpact(settings, sorted, now),
+    periods: periodImpact(config, sorted, now),
     sample: sorted.slice(0, 8).map((r) => ({
       description: r.description,
       startedAt: r.startedAt,
@@ -115,10 +118,10 @@ export async function runImport(
       chunk.map((row) =>
         db
           .prepare(
-            `INSERT INTO entries (id, description, started_at, ended_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO entries (id, client_id, description, started_at, ended_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
           )
-          .bind(crypto.randomUUID(), row.description, row.startedAt, row.endedAt, now, now),
+          .bind(crypto.randomUUID(), client.id, row.description, row.startedAt, row.endedAt, now, now),
       ),
     );
     imported += chunk.length;
@@ -130,9 +133,9 @@ export async function runImport(
 }
 
 /** How the incoming rows distribute across invoice periods. */
-function periodImpact(settings: Settings, rows: TogglRow[], now: number): PeriodImpact[] {
+function periodImpact(config: InvoiceConfig, rows: TogglRow[], now: number): PeriodImpact[] {
   if (rows.length === 0) return [];
-  const periods = listPeriods(settings, Math.max(now, rows[rows.length - 1].endedAt));
+  const periods = listPeriods(config, Math.max(now, rows[rows.length - 1].endedAt));
   const out: PeriodImpact[] = [];
 
   for (const period of periods) {

@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Entry } from '../../shared/types';
+import type { Client, Entry } from '../../shared/types';
 import { formatClock, formatCompact, formatLongDate, fromZonedParts, toZonedParts } from '../../shared/time';
 
 interface Props {
   entry: Entry;
+  clients: Client[];
   tz: string;
   now: number;
   /** Persist the edit. Rejecting leaves the modal open with the error shown. */
-  onSave: (patch: { description: string; startedAt: number; endedAt: number | null }) => Promise<void>;
+  onSave: (patch: {
+    clientId: string;
+    description: string;
+    startedAt: number;
+    endedAt: number | null;
+  }) => Promise<void>;
   /** Called once the modal is finished with, whether or not anything was saved. */
   onClose: (saved: boolean) => void;
 }
@@ -20,10 +26,11 @@ interface Props {
  * one exception is invalid input: that keeps the modal open with the error
  * visible, since neither saving nor silently dropping it would be right.
  */
-export function EntryModal({ entry, tz, now, onSave, onClose }: Props) {
+export function EntryModal({ entry, clients, tz, now, onSave, onClose }: Props) {
   const running = entry.endedAt === null;
 
   const [description, setDescription] = useState(entry.description);
+  const [clientId, setClientId] = useState(entry.clientId);
   const [startText, setStartText] = useState(() => formatClock(entry.startedAt, tz));
   const [endText, setEndText] = useState(() => (running ? '' : formatClock(entry.endedAt as number, tz)));
   const [error, setError] = useState<string | null>(null);
@@ -33,23 +40,29 @@ export function EntryModal({ entry, tz, now, onSave, onClose }: Props) {
   // Guards against the auto-save firing twice if a dismiss races the Save button.
   const closing = useRef(false);
 
-  const parse = useCallback((): { description: string; startedAt: number; endedAt: number | null } => {
+  const parse = useCallback((): {
+    clientId: string;
+    description: string;
+    startedAt: number;
+    endedAt: number | null;
+  } => {
     const startedAt = applyClock(entry.startedAt, startText, tz);
     if (startedAt === null) throw new Error('Start time must look like 09:30');
 
-    if (running) return { description, startedAt, endedAt: null };
+    if (running) return { clientId, description, startedAt, endedAt: null };
 
     let endedAt = applyClock(entry.endedAt as number, endText, tz);
     if (endedAt === null) throw new Error('End time must look like 17:00');
     // An end before the start almost always means the work ran past midnight.
     if (endedAt < startedAt) endedAt += 24 * 3600_000;
-    return { description, startedAt, endedAt };
-  }, [description, endText, entry.endedAt, entry.startedAt, running, startText, tz]);
+    return { clientId, description, startedAt, endedAt };
+  }, [clientId, description, endText, entry.endedAt, entry.startedAt, running, startText, tz]);
 
   const isDirty = useCallback((): boolean => {
     try {
       const next = parse();
       return (
+        next.clientId !== entry.clientId ||
         next.description !== entry.description ||
         next.startedAt !== entry.startedAt ||
         next.endedAt !== entry.endedAt
@@ -58,7 +71,7 @@ export function EntryModal({ entry, tz, now, onSave, onClose }: Props) {
       // Unparseable input counts as dirty so dismissal surfaces the error.
       return true;
     }
-  }, [entry.description, entry.endedAt, entry.startedAt, parse]);
+  }, [entry.clientId, entry.description, entry.endedAt, entry.startedAt, parse]);
 
   const commit = useCallback(
     async (viaDismiss: boolean) => {
@@ -139,6 +152,25 @@ export function EntryModal({ entry, tz, now, onSave, onClose }: Props) {
           <h2>Edit entry</h2>
           <span className="modal-date">{formatLongDate(entry.startedAt, tz)}</span>
         </header>
+
+        {clients.length > 1 && (
+          <label className="modal-field">
+            <span>Client</span>
+            <select
+              value={clientId}
+              onChange={(e) => {
+                setClientId(e.target.value);
+                setError(null);
+              }}
+            >
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <label className="modal-field">
           <span>Description</span>
