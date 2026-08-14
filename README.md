@@ -250,10 +250,15 @@ rather than incidental:
 - **Controls are 16px on touch devices.** iOS Safari zooms the whole page when a control
   smaller than 16px takes focus, which leaves the layout shifted afterwards. A
   `pointer: coarse` rule lifts every input, select and textarea.
-- **`100dvh` with a `100vh` fallback**, because `vh` on iOS measures the viewport with the
-  browser chrome collapsed and overshoots while it is expanded.
+- **No viewport-height floor on phones.** The full-height rule that makes the sidebar read
+  as a column is scoped to desktop, and uses `vh` rather than `dvh`. An earlier version used
+  `100dvh` here, which was a mistake: iOS resizes `dvh` as its toolbars collapse and expand,
+  so the document grew when scrolling down and shrank when scrolling up. The scroll position
+  was clamped against a height that kept moving, and the top of the page became unreachable —
+  it sprang back down on release. Nothing on a phone needs that floor.
 - **`env(safe-area-inset-*)` padding** so nothing hides under the notch or home indicator
-  in landscape.
+  in landscape, with `viewport-fit=cover` on the viewport meta — without it those insets
+  resolve to zero and the padding does nothing.
 - **`-webkit-text-size-adjust: 100%`**, or Safari inflates body text on rotation.
 - **Nothing scrolls the page sideways.** The sidebar becomes a top bar whose nav scrolls
   within itself, and wide tables sit in their own `overflow-x` container. Verified at 390px

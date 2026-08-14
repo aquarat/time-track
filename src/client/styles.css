@@ -80,10 +80,23 @@ a {
 .app {
   display: grid;
   grid-template-columns: 220px 1fr;
-  /* dvh tracks iOS Safari's collapsing toolbars; vh is the fallback and
-     overshoots the visible area while they are expanded. */
-  min-height: 100vh;
-  min-height: 100dvh;
+}
+
+/*
+ * A viewport-height floor exists only so the sidebar reads as a full-height
+ * column, which is a desktop concern — on a phone the sidebar is a top bar and
+ * the floor buys nothing.
+ *
+ * It must not apply there, and specifically must not use dvh. iOS Safari resizes
+ * dvh as its toolbars collapse and expand, so a dvh floor makes the document
+ * grow when you scroll down and shrink when you scroll up. The scroll position
+ * is clamped against a height that keeps moving underneath it, and the top of
+ * the page ends up unreachable — it springs back down as soon as you let go.
+ */
+@media (min-width: 721px) {
+  .app {
+    min-height: 100vh;
+  }
 }
 
 .sidebar {
