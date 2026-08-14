@@ -19,6 +19,7 @@ import { Timeline } from '../components/Timeline';
 import { ManualEntryForm } from '../components/ManualEntryForm';
 import { EntryModal } from '../components/EntryModal';
 import { Toast } from '../components/Toast';
+import { applyTimerFavicon } from '../favicon';
 
 type View = 'day' | 'week' | 'month';
 
@@ -60,6 +61,11 @@ export function TimerPage({ settings }: Props) {
       shownEntryId.current = id;
       setDescription(running?.description ?? '');
     }
+  }, [running]);
+
+  // Start/stop happens here, so update the tab icon without waiting for the poll.
+  useEffect(() => {
+    applyTimerFavicon(running !== null);
   }, [running]);
 
   const range = useMemo(() => rangeFor(view, anchor, tz), [view, anchor, tz]);

@@ -4,6 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
+    <!-- SVG first for browsers that take it; the PNG covers the rest. Once the
+         app loads, src/client/favicon.ts replaces these with a canvas-drawn icon
+         coloured by whether a timer is running. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Time Track</title>
   </head>
   <body>

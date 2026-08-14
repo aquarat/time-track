@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Time Track">
+  <!--
+    Solid disc with white hands rather than the thin outline used in the sidebar:
+    at 16px a stroked circle turns to mush, whereas a filled shape stays readable.
+    The idle colour matches the Start button; the running state is drawn at
+    runtime in the Stop button's colour (see src/client/favicon.ts).
+  -->
+  <style>
+    .dial { fill: #2563eb; }
+    @media (prefers-color-scheme: dark) {
+      .dial { fill: #3b82f6; }
+    }
+  </style>
+  <circle class="dial" cx="16" cy="16" r="15" />
+  <path
+    d="M16 8.5V16h5.5"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

@@ -7,6 +7,7 @@ import { InvoiceSettingsPage } from './pages/InvoiceSettingsPage';
 import { InvoicesPage } from './pages/InvoicesPage';
 import { ImportPage } from './pages/ImportPage';
 import { ClockIcon, DocumentIcon, GearIcon, UploadIcon } from './components/Icons';
+import { applyTimerFavicon, watchColourScheme } from './favicon';
 
 const NAV = [
   { path: '/', label: 'Time tracker', Icon: ClockIcon },
@@ -21,10 +22,38 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .state()
-      .then((s) => setSettings(s.settings))
-      .catch((e: Error) => setError(e.message));
+    let cancelled = false;
+    const check = () =>
+      api
+        .state()
+        .then((s) => {
+          if (cancelled) return;
+          setSettings(s.settings);
+          applyTimerFavicon(s.running !== null);
+        })
+        .catch((e: Error) => {
+          if (!cancelled) setError(e.message);
+        });
+
+    void check();
+
+    // The tab icon has to be right on every page, not just the tracker, and the
+    // timer may have been started on another device. A slow poll plus a refresh
+    // on focus keeps it honest without another live connection; the tracker page
+    // updates it immediately on start/stop, so this never lags where it matters.
+    const id = window.setInterval(() => {
+      if (!document.hidden) void check();
+    }, 60_000);
+    const onFocus = () => void check();
+    window.addEventListener('focus', onFocus);
+    const stopWatchingScheme = watchColourScheme();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      stopWatchingScheme();
+    };
   }, []);
 
   // Intercept in-app links so the sidebar navigates without a full reload,

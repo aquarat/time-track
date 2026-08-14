@@ -204,6 +204,26 @@ amount charged. Tracked time is always printed alongside the billed hours.
 **The open period** is always listed and always billable-to-date, with a running timer
 counted up to the moment you open the document.
 
+## Tab icon
+
+A clock that carries the timer's state: the Start button's blue when idle, the Stop
+button's red while a timer runs, so a glance at the tab is enough.
+
+`public/favicon.svg` is the source of truth and what shows before the app loads. The two
+PNGs beside it are rendered from it (`favicon-32.png` for browsers that don't take SVG
+favicons, `apple-touch-icon.png` full-bleed for the iOS home screen — iOS masks it into a
+rounded square, so a disc on a tile would read as a sticker). Regenerating them is a
+headless render of the SVG; there is no build step, they are committed.
+
+At runtime `src/client/favicon.ts` draws the same geometry to a canvas and swaps in a PNG
+data URL. Canvas rather than an SVG data URL because SVG favicon support is uneven, and the
+colours are read from the live CSS custom properties, so the icon follows the light/dark
+palette and any change to `--accent` or `--danger`.
+
+State is owned by `App`, not the tracker page, so the icon stays correct while you are on
+Invoices or Settings. The tracker updates it immediately on start/stop; a 60-second poll and
+a refresh on window focus catch a timer started on another device.
+
 ## Mobile / iOS
 
 The layout is responsive down to a 390px phone viewport, and a few things are deliberate

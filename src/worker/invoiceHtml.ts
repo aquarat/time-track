@@ -136,6 +136,9 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <title>${esc(period.invoiceNumber)} — ${esc(period.label)}</title>
 <style>
   @page { size: A4; margin: 16mm 14mm; }
