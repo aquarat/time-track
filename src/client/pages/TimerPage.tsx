@@ -17,6 +17,8 @@ import { api } from '../api';
 import { EntryRow } from '../components/EntryRow';
 import { Timeline } from '../components/Timeline';
 import { ManualEntryForm } from '../components/ManualEntryForm';
+import { EntryModal } from '../components/EntryModal';
+import { Toast } from '../components/Toast';
 
 type View = 'day' | 'week' | 'month';
 
@@ -35,6 +37,10 @@ export function TimerPage({ settings }: Props) {
   const [tick, setTick] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
   const [showManual, setShowManual] = useState(false);
+  const [editing, setEditing] = useState<Entry | null>(null);
+  // Carries an id so re-showing the same message remounts the toast and restarts
+  // its timer, rather than reusing a component that is already fading.
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // One second is the coarsest interval that still makes the running clock look live.
@@ -106,6 +112,29 @@ export function TimerPage({ settings }: Props) {
     [reload],
   );
 
+  const saveEntry = useCallback(
+    async (id: string, patch: { description?: string; startedAt?: number; endedAt?: number | null }) => {
+      await api.updateEntry(id, patch);
+      await reload();
+    },
+    [reload],
+  );
+
+  const resizeEntry = useCallback(
+    async (entry: Entry, startedAt: number, endedAt: number) => {
+      try {
+        await saveEntry(entry.id, { startedAt, endedAt });
+      } catch (e) {
+        setError((e as Error).message);
+        // Drop the optimistic position the drag left behind.
+        await reload();
+      }
+    },
+    [reload, saveEntry],
+  );
+
+  const dismissToast = useCallback(() => setToast(null), []);
+
   const days = useMemo(() => groupByDay(entries, range, tz, tick), [entries, range, tz, tick]);
   // The timeline shows every day in the range, including the empty ones — a week
   // with nothing logged on Thursday should show an empty Thursday, not omit it.
@@ -120,7 +149,7 @@ export function TimerPage({ settings }: Props) {
   const runningSeconds = running ? Math.max(0, (tick - running.startedAt) / 1000) : 0;
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <header className="timer-bar">
         <DescriptionInput
           value={description}
@@ -191,10 +220,14 @@ export function TimerPage({ settings }: Props) {
             days={columns}
             tz={tz}
             now={tick}
+            // Handles are only offered where blocks are wide enough to grab.
+            resizable={view === 'day'}
             onPickDay={(ms) => {
               setAnchor(ms);
               setView('day');
             }}
+            onSelectEntry={setEditing}
+            onResize={(entry, startedAt, endedAt) => void resizeEntry(entry, startedAt, endedAt)}
           />
         )}
       </section>
@@ -246,6 +279,21 @@ export function TimerPage({ settings }: Props) {
           </div>
         ))}
       </section>
+
+      {editing && (
+        <EntryModal
+          entry={editing}
+          tz={tz}
+          now={tick}
+          onSave={(patch) => saveEntry(editing.id, patch)}
+          onClose={(savedByDismissal) => {
+            setEditing(null);
+            if (savedByDismissal) setToast({ id: Date.now(), message: 'Changes saved' });
+          }}
+        />
+      )}
+
+      {toast && <Toast key={toast.id} message={toast.message} onDismiss={dismissToast} />}
     </div>
   );
 }

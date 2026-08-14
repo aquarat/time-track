@@ -195,6 +195,27 @@ amount charged. Tracked time is always printed alongside the billed hours.
 **The open period** is always listed and always billable-to-date, with a running timer
 counted up to the moment you open the document.
 
+## Editing time
+
+Three ways in, all writing the same `PATCH /api/entries/:id`:
+
+- **Click a block in the calendar** to open a modal for its description and times.
+- **Drag the top or bottom edge of a block** in the day view. Boundaries snap to the
+  nearest 15 minutes, and the new times are shown on the block as you drag. Handles are
+  offered only in the day view, where blocks are wide enough to grab.
+- **Click a row in the entries list** for the same edit inline.
+
+Dismissing the modal — backdrop, `Escape` — **saves** rather than discards. Losing a
+correction to a stray click is the worse failure, and a toast confirms the write. Two
+deliberate exceptions: if nothing changed, nothing is written and no toast appears; and if
+the input is invalid the modal stays open with the error, since neither saving nor silently
+dropping it would be right.
+
+A block is only resizable when its drawn boundaries are the entry's real ones. A slice of
+an entry that spans midnight is shown on both days but carries neither true edge, and a
+running timer has no end — so those grips are withheld rather than allowed to corrupt the
+entry.
+
 ## Importing from Toggl
 
 The **Import** page takes a Toggl Track detailed CSV export. Nothing is written until a

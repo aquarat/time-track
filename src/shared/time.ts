@@ -179,6 +179,25 @@ export function formatClock(utcMs: number, tz: string): string {
   return `${pad2(p.hour)}:${pad2(p.minute)}`;
 }
 
+/**
+ * Snap an instant to the nearest `minutes` boundary of the wall clock in `tz`.
+ *
+ * Done through the zone's calendar fields rather than by rounding the epoch
+ * value. At a 15-minute step the two happen to agree for every current zone,
+ * since all live UTC offsets are multiples of 15 minutes — but that is a
+ * coincidence not worth relying on: it already fails at coarser steps (in a
+ * +05:45 zone the local hour is quarter past in UTC), and measuring from the
+ * day's midnight instead would drift on a day containing a DST change.
+ */
+export function snapToMinutes(utcMs: number, tz: string, minutes: number): number {
+  const step = Math.max(1, Math.round(minutes));
+  const p = toZonedParts(utcMs, tz);
+  const minuteOfDay = p.hour * 60 + p.minute + p.second / 60;
+  const snapped = Math.round(minuteOfDay / step) * step;
+  // An hour of 24 is normalised into the next day by Date.UTC inside fromZonedParts.
+  return fromZonedParts(p.year, p.month, p.day, Math.floor(snapped / 60), snapped % 60, 0, tz);
+}
+
 /** "26 January 2026" — the calendar date of an instant in `tz`. */
 export function formatLongDate(utcMs: number, tz: string): string {
   const p = toZonedParts(utcMs, tz);

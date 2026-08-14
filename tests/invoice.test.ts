@@ -9,7 +9,7 @@ import {
   summaryLine,
   summaryLineDescription,
 } from '../src/shared/invoice';
-import { fromZonedParts, startOfWeek, toZonedParts } from '../src/shared/time';
+import { fromZonedParts, snapToMinutes, startOfWeek, toZonedParts } from '../src/shared/time';
 
 const SAST = 'Africa/Johannesburg'; // UTC+2, no DST
 const LONDON = 'Europe/London'; // has DST
@@ -288,6 +288,64 @@ describe('summary (non-detailed) invoice', () => {
     const line = summaryLine(invoice);
     expect(line.billedSeconds).toBe(0);
     expect(line.amount).toBe(0);
+  });
+});
+
+describe('quarter-hour snapping', () => {
+  const clock = (utcMs: number, tz: string) => {
+    const p = toZonedParts(utcMs, tz);
+    return `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}:${String(p.second).padStart(2, '0')}`;
+  };
+
+  test('rounds to the nearest quarter of the local wall clock', () => {
+    const cases: [number, number, string][] = [
+      [9, 7, '09:00:00'],
+      [9, 8, '09:15:00'],
+      [9, 22, '09:15:00'],
+      [9, 23, '09:30:00'],
+      [9, 53, '10:00:00'],
+      [9, 45, '09:45:00'],
+    ];
+    for (const [hour, minute, expected] of cases) {
+      const instant = fromZonedParts(2026, 6, 15, hour, minute, 0, LONDON);
+      expect(clock(snapToMinutes(instant, LONDON, 15), LONDON)).toBe(expected);
+    }
+  });
+
+  test('seconds are absorbed into the snap', () => {
+    const instant = fromZonedParts(2026, 6, 15, 9, 7, 31, LONDON);
+    expect(clock(snapToMinutes(instant, LONDON, 15), LONDON)).toBe('09:15:00');
+  });
+
+  test('snapping is idempotent', () => {
+    const once = snapToMinutes(fromZonedParts(2026, 6, 15, 13, 38, 0, LONDON), LONDON, 15);
+    expect(snapToMinutes(once, LONDON, 15)).toBe(once);
+  });
+
+  test('late in the day it can roll into the next midnight', () => {
+    const instant = fromZonedParts(2026, 6, 15, 23, 53, 0, LONDON);
+    const snapped = snapToMinutes(instant, LONDON, 15);
+    expect(toZonedParts(snapped, LONDON)).toMatchObject({ day: 16, hour: 0, minute: 0 });
+  });
+
+  test('a zone offset by :45 snaps to its own wall clock, not to UTC boundaries', () => {
+    // Kathmandu is UTC+05:45. At a 15-minute step that offset happens to line up
+    // with UTC quarters, so the distinguishing case is a coarser step: snapping to
+    // the hour must land on the local hour, which is quarter past in UTC.
+    const KTM = 'Asia/Kathmandu';
+    const snapped = snapToMinutes(fromZonedParts(2026, 6, 15, 9, 20, 0, KTM), KTM, 60);
+    expect(clock(snapped, KTM)).toBe('09:00:00');
+    expect(new Date(snapped).toISOString()).toBe('2026-06-15T03:15:00.000Z');
+    // Rounding the epoch value directly would have moved it to a different hour.
+    expect(snapped % (60 * 60_000)).not.toBe(0);
+  });
+
+  test('snapping stays on the local clock across a DST boundary', () => {
+    // 29 March 2026: London jumps 01:00 → 02:00. An afternoon time that day is
+    // still snapped against the wall clock, not against a 24-hour assumption.
+    const instant = fromZonedParts(2026, 3, 29, 14, 7, 0, LONDON);
+    expect(clock(snapToMinutes(instant, LONDON, 15), LONDON)).toBe('14:00:00');
+    expect(toZonedParts(snapToMinutes(instant, LONDON, 15), LONDON).day).toBe(29);
   });
 });
 
