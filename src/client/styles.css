@@ -798,6 +798,103 @@ legend {
   color: var(--ok);
 }
 
+/* --- import --------------------------------------------------------------- */
+
+/* Needs to outrank `.settings-page label`, which sets display:block. */
+.settings-page label.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.settings-page label.checkbox-row > span {
+  display: inline;
+  margin-bottom: 0;
+  font-weight: 400;
+}
+.settings-page label.checkbox-row input[type='checkbox'] {
+  width: auto;
+  flex: none;
+  margin: 0;
+}
+.standalone-hint {
+  display: block;
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 0 0 16px 27px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.stat {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+.stat.strong-stat {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+}
+.stat-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+.detail-table td {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+.detail-table td:first-child {
+  color: var(--muted);
+  width: 44%;
+}
+.detail-table tr:last-child td {
+  border-bottom: none;
+}
+
+.subhead {
+  font-size: 12.5px;
+  margin: 22px 0 8px;
+}
+
+.invoice-table.compact th,
+.invoice-table.compact td {
+  padding: 6px 10px;
+}
+
+.problem-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.problem-list li {
+  margin-bottom: 3px;
+}
+
+.import-done {
+  margin-top: 0;
+}
+
 /* --- invoices ------------------------------------------------------------- */
 
 .invoice-table {

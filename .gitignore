@@ -4,3 +4,6 @@ dist/
 .dev.vars
 *.tsbuildinfo
 .DS_Store
+
+# Toggl exports (client billing data)
+Toggl_time_entries_*.csv

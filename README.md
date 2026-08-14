@@ -143,6 +143,7 @@ the app rather than exposing it.
 ## Local development
 
 ```bash
+cp .dev.vars.example .dev.vars   # blanks the Access vars for localhost
 bun run db:migrate:local
 bunx wrangler dev            # API + assets on :8787
 bun run dev                  # optional: Vite with HMR on :5173, proxying to :8787
@@ -152,6 +153,11 @@ bun test                     # invoice and calendar maths
 
 `bun run build` must have run at least once before `wrangler dev`, since the Worker
 serves the SPA out of `dist/client`.
+
+`.dev.vars` is required locally: `wrangler dev` inherits the production Access values from
+`wrangler.jsonc`, and with no Zero Trust session in front of localhost the Worker would
+reject every request. The local D1 copy is keyed by database id, so it needs its own
+`db:migrate:local` run.
 
 ## How invoicing works
 
@@ -188,6 +194,34 @@ amount charged. Tracked time is always printed alongside the billed hours.
 
 **The open period** is always listed and always billable-to-date, with a running timer
 counted up to the moment you open the document.
+
+## Importing from Toggl
+
+The **Import** page takes a Toggl Track detailed CSV export. Nothing is written until a
+preview has been shown, and the preview is produced by the same code path as the commit,
+so the two cannot disagree.
+
+**Timezone is the one thing you must get right.** A Toggl export records bare wall-clock
+times — `"2026-08-13","14:42:09"` — with no offset anywhere in the file, so it is literally
+impossible to infer. The importer asks which zone those clocks were read in and defaults to
+this app's timezone. Set the two to the same value and every entry keeps the calendar day
+it had in Toggl.
+
+Other behaviour worth knowing:
+
+- **Duplicates** are matched on start instant + end instant + description. Re-importing the
+  same file imports nothing. Note that re-importing under a *different* timezone is
+  deliberately not treated as a duplicate — those are genuinely different instants, so a
+  corrected re-import is not silently swallowed. Delete the first attempt before retrying.
+- **Client, project, task and tag columns are ignored.** Everything belongs to the single
+  implicit project for now.
+- **Non-billable rows are imported by default**, since this app has no billable flag and
+  bills whatever it tracks. The preview states the count, and a checkbox skips them.
+- **The `Duration` column is cross-checked** against the timestamps; a row whose stated
+  duration disagrees with its own clocks is reported rather than guessed at.
+- **Bad rows never cost you the good ones** — each is listed with its line number.
+- The preview breaks the import down **per invoice period**, so you can see exactly which
+  invoices it will change before committing.
 
 ## The invoice document
 

@@ -5,12 +5,14 @@ import { useRoute } from './router';
 import { TimerPage } from './pages/TimerPage';
 import { InvoiceSettingsPage } from './pages/InvoiceSettingsPage';
 import { InvoicesPage } from './pages/InvoicesPage';
-import { ClockIcon, DocumentIcon, GearIcon } from './components/Icons';
+import { ImportPage } from './pages/ImportPage';
+import { ClockIcon, DocumentIcon, GearIcon, UploadIcon } from './components/Icons';
 
 const NAV = [
   { path: '/', label: 'Time tracker', Icon: ClockIcon },
   { path: '/invoices', label: 'Invoices', Icon: DocumentIcon },
   { path: '/settings', label: 'Invoice settings', Icon: GearIcon },
+  { path: '/import', label: 'Import', Icon: UploadIcon },
 ];
 
 export function App() {
@@ -70,6 +72,7 @@ export function App() {
         {settings && path === '/settings' && (
           <InvoiceSettingsPage settings={settings} onSaved={setSettings} />
         )}
+        {settings && path === '/import' && <ImportPage settings={settings} />}
         {settings && !NAV.some((n) => n.path === path) && (
           <div className="empty-state">
             <h1>Nothing here</h1>

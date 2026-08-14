@@ -2,6 +2,8 @@ import type { Entry, Settings } from '../shared/types';
 import { buildInvoice, findPeriod, listPeriods, summarisePeriod } from '../shared/invoice';
 import { renderInvoiceHtml } from './invoiceHtml';
 import { requireAccess } from './access';
+import { runImport } from './import';
+import type { ImportOptions } from './import';
 import {
   HttpError,
   deleteEntry,
@@ -134,6 +136,26 @@ async function handleApi(request: Request, env: Env, url: URL, now: number): Pro
       return { ok: true };
     }
     throw new HttpError(405, 'Method not allowed');
+  }
+
+  // --- import ------------------------------------------------------------
+  if (path === '/import' && method === 'POST') {
+    const body = (await readJson(request)) as Partial<ImportOptions>;
+    const settings = await getSettings(db);
+    return {
+      report: await runImport(
+        db,
+        settings,
+        {
+          csv: typeof body.csv === 'string' ? body.csv : '',
+          timezone: typeof body.timezone === 'string' ? body.timezone : settings.timezone,
+          skipNonBillable: body.skipNonBillable === true,
+          // Committing must be asked for explicitly; anything else previews.
+          dryRun: body.dryRun !== false,
+        },
+        now,
+      ),
+    };
   }
 
   if (path === '/suggestions' && method === 'GET') {

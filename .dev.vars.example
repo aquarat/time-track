@@ -1,0 +1,8 @@
+# Copy to .dev.vars for local development.
+#
+# wrangler.jsonc carries the real Access values for production, and `wrangler dev`
+# inherits them — which makes the local server reject every request, since there is
+# no Zero Trust session in front of localhost. Blanking them here turns the gate off
+# locally only. .dev.vars is gitignored and is never uploaded by `wrangler deploy`.
+ACCESS_TEAM_DOMAIN=
+ACCESS_AUD=

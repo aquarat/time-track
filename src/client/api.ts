@@ -1,4 +1,5 @@
 import type { Entry, Invoice, PeriodSummary, Settings } from '../shared/types';
+import type { ImportReport } from '../shared/togglCsv';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -54,4 +55,11 @@ export const api = {
     request<{ settings: Settings; periods: PeriodSummary[]; now: number }>('/api/invoices'),
 
   invoice: (key: string) => request<{ invoice: Invoice }>(`/api/invoices/${key}`),
+
+  importCsv: (input: {
+    csv: string;
+    timezone: string;
+    skipNonBillable: boolean;
+    dryRun: boolean;
+  }) => request<{ report: ImportReport }>('/api/import', { method: 'POST', body: JSON.stringify(input) }),
 };
