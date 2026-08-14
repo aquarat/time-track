@@ -149,6 +149,12 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
 
   * { box-sizing: border-box; }
 
+  html {
+    /* Stops iOS Safari inflating text when a phone is rotated to landscape. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   body {
     margin: 0;
     padding: 24px;
@@ -252,6 +258,8 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
   td.tracked { color: var(--muted); }
   td.empty { color: var(--muted); font-style: italic; text-align: center; padding: 18px 0; }
 
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
   .totals { margin-top: 14px; display: flex; justify-content: flex-end; }
   .totals table { width: auto; min-width: 240px; margin: 0; }
   .totals td { border: none; padding: 3px 0 3px 24px; }
@@ -277,10 +285,30 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
     color: #374151; font-size: 12px; white-space: normal;
   }
 
+  @media (max-width: 640px) {
+    body { padding: 12px; padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+    .sheet { padding: 20px 16px; }
+    .toolbar, .extras-editor { max-width: none; }
+    header.masthead { flex-direction: column; gap: 14px; }
+    .title { text-align: left; }
+    .parties { flex-direction: column; gap: 18px; }
+    /* Description takes its own row; amount and the button share the next. */
+    .extras-form input[name="description"] { flex-basis: 100%; min-width: 0; }
+    .extras-form input[name="amount"] { flex: 1; width: auto; }
+  }
+
+  /* iOS Safari zooms the page when a sub-16px control takes focus. */
+  @media (pointer: coarse) {
+    .layout-form input[type="checkbox"] { width: 18px; height: 18px; }
+    .extras-form input { font-size: 16px; }
+    .extras-remove { padding: 8px 14px; }
+  }
+
   @media print {
     body { background: #fff; padding: 0; }
     .sheet { max-width: none; padding: 0; box-shadow: none; }
     .toolbar, .extras-editor { display: none; }
+    .table-scroll { overflow: visible; }
     thead { display: table-header-group; }
     tr { page-break-inside: avoid; }
     /* Requested: the time log always starts on a new page. */
@@ -350,6 +378,7 @@ ${extraEditor}
 
   ${noticeBanner}
 
+  <div class="table-scroll">
   <table>
     <thead>
       <tr>
@@ -365,6 +394,7 @@ ${extraEditor}
       ${extraRows}
     </tbody>
   </table>
+  </div>
 
   <div class="totals">
     <table>

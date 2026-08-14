@@ -215,6 +215,7 @@ function Report({
       {report.periods.length > 0 && (
         <>
           <h3 className="subhead">How this lands on your invoices</h3>
+          <div className="table-scroll">
           <table className="invoice-table compact">
             <thead>
               <tr>
@@ -235,6 +236,7 @@ function Report({
               ))}
             </tbody>
           </table>
+          </div>
         </>
       )}
 

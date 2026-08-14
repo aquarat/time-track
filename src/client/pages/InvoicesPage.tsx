@@ -57,6 +57,7 @@ export function InvoicesPage({ onNavigate }: Props) {
       )}
 
       {periods.length > 0 && (
+        <div className="table-scroll">
         <table className="invoice-table">
           <thead>
             <tr>
@@ -105,6 +106,7 @@ export function InvoicesPage({ onNavigate }: Props) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

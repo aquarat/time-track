@@ -34,6 +34,12 @@
   box-sizing: border-box;
 }
 
+html {
+  /* Stops iOS Safari inflating body text when a phone is rotated to landscape. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -74,7 +80,10 @@ a {
 .app {
   display: grid;
   grid-template-columns: 220px 1fr;
+  /* dvh tracks iOS Safari's collapsing toolbars; vh is the fallback and
+     overshoots the visible area while they are expanded. */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar {
@@ -139,6 +148,10 @@ a {
 
 .content {
   padding: 24px 28px 64px;
+  /* Keep clear of the notch and home indicator in landscape. */
+  padding-left: max(28px, env(safe-area-inset-left));
+  padding-right: max(28px, env(safe-area-inset-right));
+  padding-bottom: max(64px, env(safe-area-inset-bottom));
   min-width: 0;
 }
 
@@ -763,7 +776,9 @@ legend {
 }
 .settings-page textarea {
   resize: vertical;
-  font: inherit;
+  /* font-family only: the shorthand would pin the size and defeat the
+     touch-device rule that lifts controls to 16px. */
+  font-family: inherit;
 }
 .settings-page small {
   display: block;
@@ -788,6 +803,9 @@ legend {
   display: flex;
   align-items: center;
   gap: 14px;
+  /* A file input carries a wide intrinsic size that will not shrink on its own;
+     without wrapping it forced the whole settings form past the viewport. */
+  flex-wrap: wrap;
 }
 .logo-preview {
   max-height: 56px;
@@ -810,6 +828,11 @@ legend {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.logo-actions input[type='file'] {
+  max-width: 100%;
 }
 .logo-actions button {
   border: 1px solid var(--rule);
@@ -871,7 +894,8 @@ legend {
   font-weight: 400;
 }
 .settings-page label.checkbox-row input[type='checkbox'] {
-  width: auto;
+  width: 16px;
+  height: 16px;
   flex: none;
   margin: 0;
 }
@@ -958,10 +982,17 @@ legend {
   margin-top: 0;
 }
 
+/* Wide tables scroll within themselves rather than widening the page. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* --- invoices ------------------------------------------------------------- */
 
 .invoice-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -1030,20 +1061,130 @@ legend {
   .app {
     grid-template-columns: 1fr;
   }
+
+  /* The sidebar becomes a top bar. Its nav scrolls inside itself; letting it
+     overflow instead made every page scroll sideways. */
   .sidebar {
     flex-direction: row;
     align-items: center;
-    gap: 16px;
-    padding: 10px 12px;
+    gap: 10px;
+    padding: 8px 10px;
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-left: max(10px, env(safe-area-inset-left));
+    padding-right: max(10px, env(safe-area-inset-right));
+    overflow: hidden;
+  }
+  .brand {
+    padding: 0;
+    flex: none;
+  }
+  .brand-name {
+    display: none;
   }
   .sidebar nav {
     flex-direction: row;
+    flex: 1;
+    min-width: 0;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
+  .sidebar nav::-webkit-scrollbar {
+    display: none;
+  }
+  .nav-item {
+    white-space: nowrap;
+    padding: 8px 10px;
+  }
+  /* Reclaim the width for the nav; the zone is on the settings page anyway. */
   .sidebar-foot {
-    margin-top: 0;
+    display: none;
   }
+
   .content {
     padding: 16px;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-bottom: max(48px, env(safe-area-inset-bottom));
+  }
+
+  .timer-bar {
+    flex-wrap: wrap;
+  }
+  .description-field {
+    flex-basis: 100%;
+  }
+  /* The description takes the first row; the clock then spreads so Start lands
+     on the right edge rather than floating in the middle of the second row. */
+  .timer-clock {
+    flex: 1;
+    text-align: left;
+    min-width: 0;
+  }
+
+  .modal-times {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/*
+ * Touch devices: iOS Safari zooms the whole page when a control smaller than
+ * 16px takes focus, which is jarring and leaves the layout shifted. Bumping the
+ * font size is the standard fix. Controls also grow to a usable tap size.
+ */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  input[type='checkbox'],
+  .settings-page label.checkbox-row input[type='checkbox'] {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Tap targets: these sit below the ~44px Apple recommends and were the
+     hardest things to hit in the emulator. */
+  .link-button {
+    padding: 8px 0;
+  }
+  .entry-desc {
+    padding: 8px 0;
+  }
+  .column-head {
+    height: 34px;
+  }
+  .nav-group button,
+  .view-toggle button {
+    padding: 9px 14px;
+  }
+  .month-cell {
+    aspect-ratio: 1.15;
+  }
+
+  .entry-actions button {
+    padding: 9px 10px;
+  }
+
+  .nav-item {
+    padding: 11px 12px;
+  }
+
+  /* A 9px grab strip is unusable with a finger. */
+  .grip {
+    height: 22px;
+  }
+  .grip-top {
+    top: -8px;
+  }
+  .grip-bottom {
+    bottom: -8px;
+  }
+  .grip::after {
+    opacity: 1;
+    top: 9px;
   }
 }
 

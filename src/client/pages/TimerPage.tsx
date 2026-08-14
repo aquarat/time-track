@@ -42,12 +42,25 @@ export function TimerPage({ settings }: Props) {
   // its timer, rather than reusing a component that is already fading.
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Which entry the box is currently showing, so a background refresh of the
+  // same entry never overwrites what is being typed.
+  const shownEntryId = useRef<string | null>(null);
 
   // One second is the coarsest interval that still makes the running clock look live.
   useEffect(() => {
     const id = window.setInterval(() => setTick(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  // While a timer runs the box *is* that entry's description; otherwise it is the
+  // draft for the next one. Only a change of entry resets it.
+  useEffect(() => {
+    const id = running?.id ?? null;
+    if (id !== shownEntryId.current) {
+      shownEntryId.current = id;
+      setDescription(running?.description ?? '');
+    }
+  }, [running]);
 
   const range = useMemo(() => rangeFor(view, anchor, tz), [view, anchor, tz]);
 
@@ -74,11 +87,29 @@ export function TimerPage({ settings }: Props) {
     return () => window.removeEventListener('focus', onFocus);
   }, [reload]);
 
+  /** Write the box back to the running entry, if it has drifted from it. */
+  const flushDescription = useCallback(async () => {
+    if (!running || description === running.description) return;
+    try {
+      await api.updateEntry(running.id, { description });
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [description, reload, running]);
+
+  // Save shortly after typing stops rather than per keystroke. Blur, Enter and
+  // stopping the timer all flush immediately, so nothing depends on this firing.
+  useEffect(() => {
+    if (!running || description === running.description) return;
+    const id = window.setTimeout(() => void flushDescription(), 700);
+    return () => window.clearTimeout(id);
+  }, [description, flushDescription, running]);
+
   const start = useCallback(async () => {
     try {
       const { entry } = await api.startTimer(description);
       setRunning(entry);
-      setDescription('');
       await reload();
     } catch (e) {
       setError((e as Error).message);
@@ -87,13 +118,15 @@ export function TimerPage({ settings }: Props) {
 
   const stop = useCallback(async () => {
     try {
+      // Commit a half-typed correction before the entry stops being "running".
+      await flushDescription();
       await api.stopTimer();
       setRunning(null);
       await reload();
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [reload]);
+  }, [flushDescription, reload]);
 
   const toggle = useCallback(() => (running ? void stop() : void start()), [running, start, stop]);
 
@@ -155,8 +188,8 @@ export function TimerPage({ settings }: Props) {
           value={description}
           onChange={setDescription}
           onSubmit={toggle}
-          disabled={running !== null}
-          runningText={running?.description ?? ''}
+          onFlush={() => void flushDescription()}
+          running={running !== null}
           inputRef={inputRef}
         />
         <div className="timer-clock">{formatDuration(runningSeconds)}</div>
@@ -303,9 +336,11 @@ export function TimerPage({ settings }: Props) {
 interface DescriptionInputProps {
   value: string;
   onChange: (v: string) => void;
+  /** Start or stop the timer. */
   onSubmit: () => void;
-  disabled: boolean;
-  runningText: string;
+  /** Persist the box to the running entry now. */
+  onFlush: () => void;
+  running: boolean;
   inputRef: React.RefObject<HTMLInputElement | null>;
 }
 
@@ -313,8 +348,8 @@ function DescriptionInput({
   value,
   onChange,
   onSubmit,
-  disabled,
-  runningText,
+  onFlush,
+  running,
   inputRef,
 }: DescriptionInputProps) {
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -323,7 +358,6 @@ function DescriptionInput({
 
   // Debounced so a fast typist does not fire a query per keystroke.
   useEffect(() => {
-    if (disabled) return;
     const id = window.setTimeout(() => {
       api
         .suggestions(value)
@@ -331,9 +365,9 @@ function DescriptionInput({
         .catch(() => setSuggestions([]));
     }, 150);
     return () => window.clearTimeout(id);
-  }, [value, disabled]);
+  }, [value]);
 
-  const visible = open && !disabled && suggestions.length > 0;
+  const visible = open && suggestions.length > 0;
 
   const choose = (text: string) => {
     onChange(text);
@@ -347,19 +381,30 @@ function DescriptionInput({
       <input
         ref={inputRef}
         type="text"
-        placeholder={disabled ? '' : 'What are you working on?'}
-        value={disabled ? runningText : value}
-        disabled={disabled}
+        placeholder="What are you working on?"
+        value={value}
         onChange={(e) => {
           onChange(e.target.value);
           setOpen(true);
           setHighlight(-1);
         }}
         onFocus={() => setOpen(true)}
-        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        onBlur={() => {
+          window.setTimeout(() => setOpen(false), 120);
+          onFlush();
+        }}
         onKeyDown={(e) => {
           if (!visible) {
-            if (e.key === 'Enter') onSubmit();
+            // While running, Enter commits the edit. Stopping the timer on a
+            // keystroke meant for the text would be a nasty surprise.
+            if (e.key === 'Enter') {
+              if (running) {
+                onFlush();
+                e.currentTarget.blur();
+              } else {
+                onSubmit();
+              }
+            }
             return;
           }
           if (e.key === 'ArrowDown') {
@@ -371,7 +416,12 @@ function DescriptionInput({
           } else if (e.key === 'Enter') {
             e.preventDefault();
             if (highlight >= 0) choose(suggestions[highlight]);
-            else onSubmit();
+            else if (running) {
+              onFlush();
+              e.currentTarget.blur();
+            } else {
+              onSubmit();
+            }
           } else if (e.key === 'Escape') {
             setOpen(false);
           }

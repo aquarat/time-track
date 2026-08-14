@@ -204,6 +204,30 @@ amount charged. Tracked time is always printed alongside the billed hours.
 **The open period** is always listed and always billable-to-date, with a running timer
 counted up to the moment you open the document.
 
+## Mobile / iOS
+
+The layout is responsive down to a 390px phone viewport, and a few things are deliberate
+rather than incidental:
+
+- **Controls are 16px on touch devices.** iOS Safari zooms the whole page when a control
+  smaller than 16px takes focus, which leaves the layout shifted afterwards. A
+  `pointer: coarse` rule lifts every input, select and textarea.
+- **`100dvh` with a `100vh` fallback**, because `vh` on iOS measures the viewport with the
+  browser chrome collapsed and overshoots while it is expanded.
+- **`env(safe-area-inset-*)` padding** so nothing hides under the notch or home indicator
+  in landscape.
+- **`-webkit-text-size-adjust: 100%`**, or Safari inflates body text on rotation.
+- **Nothing scrolls the page sideways.** The sidebar becomes a top bar whose nav scrolls
+  within itself, and wide tables sit in their own `overflow-x` container. Verified at 390px
+  on all five pages, and in landscape.
+- Drag grips grow from 9px to 22px on touch, which is the difference between usable and not.
+
+Caveat on how this was checked: it was measured in Chromium under iPhone emulation
+(viewport, device pixel ratio, touch, iOS user agent). **It has not been run against real
+WebKit** — the engine could not be installed on the development machine. The fixes above
+target documented Safari behaviours, but if something looks wrong on an actual device,
+that gap is the reason.
+
 ## Editing time
 
 Three ways in, all writing the same `PATCH /api/entries/:id`:
@@ -213,6 +237,11 @@ Three ways in, all writing the same `PATCH /api/entries/:id`:
   nearest 15 minutes, and the new times are shown on the block as you drag. Handles are
   offered only in the day view, where blocks are wide enough to grab.
 - **Click a row in the entries list** for the same edit inline.
+
+The description box at the top stays editable while a timer runs — it *is* that entry's
+description at that point. Edits save shortly after typing stops, and immediately on blur,
+on Enter, or when the timer is stopped. Enter deliberately does not stop the timer while one
+is running; losing a timer to a keystroke meant for the text would be a poor trade.
 
 Dismissing the modal — backdrop, `Escape` — **saves** rather than discards. Losing a
 correction to a stray click is the worse failure, and a toast confirms the write. Two
