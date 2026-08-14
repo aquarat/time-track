@@ -6,7 +6,11 @@ import { runImport } from './import';
 import type { ImportOptions } from './import';
 import {
   HttpError,
+  addExtra,
   deleteEntry,
+  deleteExtra,
+  listAllExtras,
+  listExtras,
   getRunningEntry,
   getSettings,
   insertEntry,
@@ -38,7 +42,7 @@ export default {
         return json(await handleApi(request, env, url, now));
       }
       if (url.pathname.startsWith('/invoice/')) {
-        return await handleInvoicePage(env, url, now);
+        return await handleInvoiceRoutes(request, env, url, now);
       }
     } catch (err) {
       if (err instanceof HttpError) {
@@ -172,11 +176,16 @@ async function handleApi(request: Request, env: Env, url: URL, now: number): Pro
     // a round trip per month and the dataset is a personal-scale time log.
     const earliest = periods[periods.length - 1].startUtc;
     const latest = periods[0].endUtc;
-    const entries = await listEntries(db, earliest, latest);
+    const [entries, extrasByPeriod] = await Promise.all([
+      listEntries(db, earliest, latest),
+      listAllExtras(db),
+    ]);
 
     return {
       settings,
-      periods: periods.map((p) => summarisePeriod(p, settings, entries, now)),
+      periods: periods.map((p) =>
+        summarisePeriod(p, settings, entries, now, extrasByPeriod.get(p.key) ?? []),
+      ),
       now,
     };
   }
@@ -193,8 +202,11 @@ async function loadInvoice(env: Env, key: string, now: number) {
   const settings = await getSettings(env.DB);
   const period = findPeriod(settings, key, now);
   if (!period) throw new HttpError(404, `No invoice period ${key}`);
-  const entries = await listEntries(env.DB, period.startUtc, period.endUtc);
-  return buildInvoice(period, settings, entries, now);
+  const [entries, extras] = await Promise.all([
+    listEntries(env.DB, period.startUtc, period.endUtc),
+    listExtras(env.DB, key),
+  ]);
+  return buildInvoice(period, settings, entries, now, extras);
 }
 
 const TRUE_TOKENS = new Set(['1', 'true', 'on', 'yes']);
@@ -222,10 +234,48 @@ function layoutFlag(url: URL, name: string, fallback: boolean): boolean {
   return fallback;
 }
 
-async function handleInvoicePage(env: Env, url: URL, now: number): Promise<Response> {
-  const match = /^\/invoice\/(\d{4}-\d{2})$/.exec(url.pathname);
-  if (!match) return new Response('Not found', { status: 404 });
-  const invoice = await loadInvoice(env, match[1], now);
+/**
+ * The invoice document, plus the form posts that manage its extra line items.
+ *
+ * Those posts redirect back to the document (303) rather than answering with it,
+ * so a refresh after adding a line does not re-submit the form. The layout query
+ * string is carried through so the view the user was in survives the round trip.
+ */
+async function handleInvoiceRoutes(
+  request: Request,
+  env: Env,
+  url: URL,
+  now: number,
+): Promise<Response> {
+  const method = request.method.toUpperCase();
+
+  const addMatch = /^\/invoice\/(\d{4}-\d{2})\/extras$/.exec(url.pathname);
+  if (addMatch && method === 'POST') {
+    const key = addMatch[1];
+    // Reject a post against a period that does not exist before writing anything.
+    await loadInvoice(env, key, now);
+    const form = await request.formData();
+    const amountText = String(form.get('amount') ?? '').trim();
+    const amount = Number(amountText);
+    if (amountText === '' || !Number.isFinite(amount)) {
+      throw new HttpError(400, 'Amount must be a number');
+    }
+    await addExtra(env.DB, key, String(form.get('description') ?? ''), amount, now);
+    return redirectToInvoice(key, form);
+  }
+
+  const deleteMatch = /^\/invoice\/(\d{4}-\d{2})\/extras\/([A-Za-z0-9-]+)\/delete$/.exec(url.pathname);
+  if (deleteMatch && method === 'POST') {
+    const [, key, id] = deleteMatch;
+    const form = await request.formData();
+    if (!(await deleteExtra(env.DB, key, id))) throw new HttpError(404, 'Line item not found');
+    return redirectToInvoice(key, form);
+  }
+
+  const pageMatch = /^\/invoice\/(\d{4}-\d{2})$/.exec(url.pathname);
+  if (!pageMatch || method !== 'GET') return new Response('Not found', { status: 404 });
+
+  const invoice = await loadInvoice(env, pageMatch[1], now);
   const layout: InvoiceLayout = {
     detailedInvoice: layoutFlag(url, 'detailed', invoice.settings.defaultDetailedInvoice),
     detailedTimeLog: layoutFlag(url, 'timelog', invoice.settings.defaultDetailedTimeLog),
@@ -236,6 +286,19 @@ async function handleInvoicePage(env: Env, url: URL, now: number): Promise<Respo
       // The document reflects live tracked time; never let it be cached.
       'Cache-Control': 'no-store',
     },
+  });
+}
+
+function redirectToInvoice(key: string, form: FormData): Response {
+  const params = new URLSearchParams();
+  for (const name of ['detailed', 'timelog']) {
+    const value = form.get(name);
+    if (typeof value === 'string' && value !== '') params.set(name, value);
+  }
+  const query = params.toString();
+  return new Response(null, {
+    status: 303,
+    headers: { Location: `/invoice/${key}${query ? `?${query}` : ''}` },
   });
 }
 

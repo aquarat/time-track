@@ -11,6 +11,7 @@ import type {
   Entry,
   Invoice,
   InvoiceDayDetail,
+  InvoiceExtra,
   InvoiceLine,
   Period,
   PeriodSummary,
@@ -133,6 +134,7 @@ export function buildInvoice(
   settings: Settings,
   entries: Entry[],
   now: number,
+  extras: InvoiceExtra[] = [],
 ): Invoice {
   const tz = settings.timezone;
   const relevant = entries.filter((e) => secondsInWindow(e, period.startUtc, period.endUtc, now) > 0);
@@ -182,18 +184,23 @@ export function buildInvoice(
 
   const rawSeconds = lines.reduce((sum, l) => sum + l.rawSeconds, 0);
   const billedSeconds = lines.reduce((sum, l) => sum + l.billedSeconds, 0);
+  // Summing the line amounts (rather than re-deriving from the total hours)
+  // guarantees the printed column adds up to the printed total.
+  const total = round2(lines.reduce((sum, l) => sum + l.amount, 0));
+  const extrasTotal = round2(extras.reduce((sum, e) => sum + e.amount, 0));
 
   return {
     period,
     settings,
     lines,
     details,
+    extras,
     rawSeconds,
     billedSeconds,
     billedHours: billedSeconds / 3600,
-    // Summing the line amounts (rather than re-deriving from the total hours)
-    // guarantees the printed column adds up to the printed total.
-    total: round2(lines.reduce((sum, l) => sum + l.amount, 0)),
+    total,
+    extrasTotal,
+    grandTotal: round2(total + extrasTotal),
     inProgress: period.endUtc > now,
     hasRunningEntry,
   };
@@ -204,21 +211,25 @@ export function summarisePeriod(
   settings: Settings,
   entries: Entry[],
   now: number,
+  extras: InvoiceExtra[] = [],
 ): PeriodSummary {
-  const invoice = buildInvoice(period, settings, entries, now);
+  const invoice = buildInvoice(period, settings, entries, now, extras);
   return {
     ...period,
     rawSeconds: invoice.rawSeconds,
     billedSeconds: invoice.billedSeconds,
     billedHours: invoice.billedHours,
     total: invoice.total,
+    extrasTotal: invoice.extrasTotal,
+    extrasCount: invoice.extras.length,
+    grandTotal: invoice.grandTotal,
     inProgress: invoice.inProgress,
     entryCount: invoice.details.reduce((sum, d) => sum + d.entries.length, 0),
   };
 }
 
-/** Service wording on a summary (non-detailed) invoice. */
-export const SUMMARY_SERVICE_DESCRIPTION = 'Software development services';
+/** Fallback wording when the setting has been cleared. */
+export const DEFAULT_SUMMARY_SERVICE_DESCRIPTION = 'Software development services';
 
 /**
  * The description on a summary invoice's single line.
@@ -227,8 +238,10 @@ export const SUMMARY_SERVICE_DESCRIPTION = 'Software development services';
  * where the end is the exclusive cut-over, matching how the period is defined
  * rather than the inclusive last day shown in the document header.
  */
-export function summaryLineDescription(period: Period, tz: string): string {
-  return `${SUMMARY_SERVICE_DESCRIPTION} - ${formatLongDate(period.startUtc, tz)} to ${formatLongDate(period.endUtc, tz)}`;
+export function summaryLineDescription(period: Period, settings: Settings): string {
+  const service = settings.summaryServiceDescription.trim() || DEFAULT_SUMMARY_SERVICE_DESCRIPTION;
+  const tz = settings.timezone;
+  return `${service} - ${formatLongDate(period.startUtc, tz)} to ${formatLongDate(period.endUtc, tz)}`;
 }
 
 /**
@@ -241,7 +254,7 @@ export function summaryLineDescription(period: Period, tz: string): string {
  */
 export function summaryLine(invoice: Invoice): InvoiceLine {
   return {
-    description: summaryLineDescription(invoice.period, invoice.settings.timezone),
+    description: summaryLineDescription(invoice.period, invoice.settings),
     rawSeconds: invoice.rawSeconds,
     billedSeconds: invoice.billedSeconds,
     billedHours: invoice.billedHours,

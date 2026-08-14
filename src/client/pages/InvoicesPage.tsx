@@ -83,7 +83,17 @@ export function InvoicesPage({ onNavigate }: Props) {
                 <td className="num muted">{formatCompact(p.rawSeconds)}</td>
                 <td className="num">{formatHours(p.billedSeconds)} h</td>
                 {settings.hourlyRate > 0 && (
-                  <td className="num strong">{formatMoney(p.total, settings.currency)}</td>
+                  <td className="num strong">
+                    {formatMoney(p.grandTotal, settings.currency)}
+                    {p.extrasCount > 0 && (
+                      <span
+                        className="extras-note"
+                        title={`Includes ${formatMoney(p.extrasTotal, settings.currency)} of additional line items`}
+                      >
+                        +{p.extrasCount}
+                      </span>
+                    )}
+                  </td>
                 )}
                 <td className="num">
                   {/* A normal link: the document is rendered by the Worker, not the SPA. */}

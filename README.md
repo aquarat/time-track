@@ -50,8 +50,15 @@ entry via `PATCH`, closes any other open row first.
 settings page. There is no users table: the app is single-tenant by construction, and
 identity is handled entirely by Cloudflare Access.
 
-No invoice is ever stored. Invoices are derived on read from `settings` + `entries`, which
-is what makes numbering impossible to corrupt.
+**`invoice_extras`** — hand-entered line items, keyed by `period_key` (`"YYYY-MM"`, the same
+identifier the invoice URL uses). Amounts may be negative, which is how a discount or credit
+is expressed.
+
+Nothing else about an invoice is stored. The rest is derived on read from `settings` +
+`entries`, which is what makes numbering impossible to corrupt. Note that a period key's
+meaning depends on the period day and the naming convention, so changing either re-points
+existing extras at a different date range — the same caveat that already applies to invoice
+numbering.
 
 ## API
 
@@ -71,6 +78,8 @@ All routes are JSON except `/invoice/:period`, and all sit behind the Access che
 | `GET` | `/api/invoices` | All periods that have begun, with totals |
 | `GET` | `/api/invoices/:period` | One invoice as JSON (`:period` is `YYYY-MM`) |
 | `GET` | `/invoice/:period` | The same invoice as print-ready HTML |
+| `POST` | `/invoice/:period/extras` | Add a line item (form post, redirects back) |
+| `POST` | `/invoice/:period/extras/:id/delete` | Remove one (form post, redirects back) |
 
 Client clocks are never trusted for billing: `now` always comes from the Worker, so a
 running timer is valued against server time.
@@ -216,6 +225,20 @@ an entry that spans midnight is shown on both days but carries neither true edge
 running timer has no end — so those grips are withheld rather than allowed to corrupt the
 entry.
 
+### Additional line items
+
+The invoice page carries a small form under the toolbar for expenses, licences, a fixed fee
+or a discount. Items belong to one period and appear only on that invoice.
+
+They land as italic rows beneath the time lines, with the hours and rate columns left blank
+rather than zeroed, and the totals block splits into *Time subtotal*, *Additional items* and
+*Total due*. Negative amounts are accepted deliberately. The editor is part of the page
+furniture, not the document, so it does not print.
+
+Adding and removing are plain form posts that redirect back to the document, so a refresh
+never re-submits and the whole thing works without JavaScript. Deletes are scoped by period
+as well as id, so a stale form cannot reach another invoice's items.
+
 ## Importing from Toggl
 
 The **Import** page takes a Toggl Track detailed CSV export. Nothing is written until a
@@ -263,6 +286,10 @@ Two checkboxes in the document's toolbar (neither prints):
 the summary line reports the sum of those already-rounded lines rather than re-rounding the
 raw total — otherwise a presentation choice would change what you charge. There is a test
 covering every rounding mode and increment for exactly this.
+
+The summary line's wording is configurable on the invoice settings page — the period dates
+are appended automatically, and clearing the field falls back to "Software development
+services" rather than leaving a dangling dash.
 
 Defaults live on the invoice settings page. A per-invoice choice is **not** persisted: it
 lives in the URL as `?detailed=0&timelog=1`, so a particular rendering is reproducible and

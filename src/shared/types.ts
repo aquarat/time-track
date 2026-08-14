@@ -30,6 +30,8 @@ export interface Settings {
   currency: string;
   hourlyRate: number;
   invoiceFooter: string;
+  /** Wording of the single line on a summary invoice. */
+  summaryServiceDescription: string;
 
   roundingMode: RoundingMode;
   roundingIncrement: number;
@@ -68,6 +70,21 @@ export interface Period {
   invoiceNumber: string;
 }
 
+/**
+ * A line entered by hand against one invoice period.
+ *
+ * The only part of an invoice that is stored rather than derived from tracked
+ * time, so it carries its own amount and no hours.
+ */
+export interface InvoiceExtra {
+  id: string;
+  periodKey: string;
+  description: string;
+  amount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface InvoiceLine {
   description: string;
   /** Sum of raw tracked seconds before rounding. */
@@ -90,10 +107,15 @@ export interface Invoice {
   settings: Settings;
   lines: InvoiceLine[];
   details: InvoiceDayDetail[];
+  extras: InvoiceExtra[];
   rawSeconds: number;
   billedSeconds: number;
   billedHours: number;
+  /** Time-based lines only. */
   total: number;
+  extrasTotal: number;
+  /** What is actually owed: time plus extras. */
+  grandTotal: number;
   /** True when the period has not finished yet. */
   inProgress: boolean;
   /** True when a timer is still running inside this period. */
@@ -104,7 +126,12 @@ export interface PeriodSummary extends Period {
   rawSeconds: number;
   billedSeconds: number;
   billedHours: number;
+  /** Time-based lines only. */
   total: number;
+  extrasTotal: number;
+  extrasCount: number;
+  /** What is actually owed: time plus extras. */
+  grandTotal: number;
   inProgress: boolean;
   entryCount: number;
 }

@@ -67,6 +67,20 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
 
   const emptyRow = `<tr><td class="desc empty" colspan="${columnCount}">No time tracked in this period.</td></tr>`;
 
+  // Extras carry an amount but no hours, so the time columns are left blank
+  // rather than filled with a zero that would read as "no work done".
+  const extraRows = invoice.extras
+    .map(
+      (e) => `<tr class="extra-row">
+      <td class="desc">${esc(e.description)}</td>
+      ${showTracked ? '<td class="num tracked"></td>' : ''}
+      <td class="num"></td>
+      ${showRates ? '<td class="num"></td>' : ''}
+      ${showRates ? `<td class="num">${esc(formatMoney(e.amount, currency))}</td>` : ''}
+    </tr>`,
+    )
+    .join('\n');
+
   const detailRows = details
     .map((day) => {
       const entries = day.entries
@@ -85,6 +99,37 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
       ${entries}`;
     })
     .join('\n');
+
+  const layoutInputs = `<input type="hidden" name="detailed" value="${layout.detailedInvoice ? 1 : 0}">
+      <input type="hidden" name="timelog" value="${layout.detailedTimeLog ? 1 : 0}">`;
+
+  const extraEditor = `<section class="extras-editor">
+  <h2>Additional line items</h2>
+  ${
+    invoice.extras.length > 0
+      ? `<ul class="extras-list">
+    ${invoice.extras
+      .map(
+        (e) => `<li>
+      <span class="extras-desc">${esc(e.description)}</span>
+      <span class="extras-amount">${esc(formatMoney(e.amount, currency))}</span>
+      <form method="post" action="/invoice/${esc(period.key)}/extras/${esc(e.id)}/delete">
+        ${layoutInputs}
+        <button type="submit" class="extras-remove" aria-label="Remove line item">Remove</button>
+      </form>
+    </li>`,
+      )
+      .join('\n')}
+  </ul>`
+      : '<p class="extras-empty">None yet. Anything added here appears on this invoice only.</p>'
+  }
+  <form class="extras-form" method="post" action="/invoice/${esc(period.key)}/extras">
+    ${layoutInputs}
+    <input type="text" name="description" placeholder="Description" maxlength="300" required>
+    <input type="number" name="amount" step="0.01" placeholder="Amount" required>
+    <button type="submit">Add line item</button>
+  </form>
+</section>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -140,16 +185,45 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
   .layout-form label:hover { border-color: var(--accent); }
   .layout-form input[type="checkbox"] { margin: 0; cursor: pointer; }
 
-  /* stretch lets .logo take the title block's height, so the image can be sized
-     against it and bottom-aligned with the period/timezone line. */
-  header.masthead { display: flex; justify-content: space-between; align-items: stretch; gap: 24px; }
-  .logo { display: flex; align-items: flex-end; min-width: 0; }
-  .logo img {
-    max-height: 100%;
-    max-width: 300px;
-    object-fit: contain;
-    object-position: left bottom;
+  /* Editing surface, not part of the document — hidden when printing. */
+  .extras-editor {
+    max-width: 190mm; margin: 0 auto 16px; padding: 14px 16px;
+    background: #fff; border: 1px solid var(--rule); border-radius: 8px;
   }
+  .extras-editor h2 {
+    margin: 0 0 10px; font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600;
+  }
+  .extras-empty { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+  .extras-list { list-style: none; margin: 0 0 12px; padding: 0; }
+  .extras-list li {
+    display: flex; align-items: center; gap: 12px;
+    padding: 6px 0; border-bottom: 1px solid var(--rule);
+  }
+  .extras-desc { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .extras-amount { font-weight: 600; white-space: nowrap; }
+  .extras-list form { margin: 0; }
+  .extras-remove {
+    font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 5px;
+    border: 1px solid var(--rule); background: #fff; color: var(--muted); cursor: pointer;
+  }
+  .extras-remove:hover { color: #b91c1c; border-color: #b91c1c; }
+
+  .extras-form { display: flex; gap: 8px; flex-wrap: wrap; }
+  .extras-form input {
+    font: inherit; padding: 7px 10px; border: 1px solid var(--rule); border-radius: 6px;
+  }
+  .extras-form input[name="description"] { flex: 1; min-width: 220px; }
+  .extras-form input[name="amount"] { width: 130px; text-align: right; }
+  .extras-form button {
+    font: inherit; padding: 7px 16px; border-radius: 6px; cursor: pointer;
+    background: var(--accent); color: #fff; border: 1px solid var(--accent);
+  }
+
+  tr.extra-row td.desc { font-style: italic; }
+
+  header.masthead { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+  .logo img { max-height: 64px; max-width: 220px; object-fit: contain; }
   .title { text-align: right; }
   .title h1 { margin: 0; font-size: 26px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600; }
   .title .number { margin-top: 4px; font-size: 15px; font-weight: 600; }
@@ -206,7 +280,7 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
   @media print {
     body { background: #fff; padding: 0; }
     .sheet { max-width: none; padding: 0; box-shadow: none; }
-    .toolbar { display: none; }
+    .toolbar, .extras-editor { display: none; }
     thead { display: table-header-group; }
     tr { page-break-inside: avoid; }
     /* Requested: the time log always starts on a new page. */
@@ -245,6 +319,8 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
   </form>
   <a href="/invoices">Back to invoices</a>
 </div>
+
+${extraEditor}
 
 <div class="sheet">
   <header class="masthead">
@@ -286,6 +362,7 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
     </thead>
     <tbody>
       ${lines.length > 0 ? lineRows : emptyRow}
+      ${extraRows}
     </tbody>
   </table>
 
@@ -295,7 +372,13 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
         ${showTracked ? `<tr><td>Tracked</td><td>${esc(formatCompact(invoice.rawSeconds))}</td></tr>` : ''}
         <tr><td>Billable hours</td><td>${esc(formatHours(invoice.billedSeconds))}</td></tr>
         ${showRates ? `<tr><td>Rate</td><td>${esc(formatMoney(s.hourlyRate, currency))} / hour</td></tr>` : ''}
-        ${showRates ? `<tr class="grand"><td>Total due</td><td>${esc(formatMoney(invoice.total, currency))}</td></tr>` : ''}
+        ${
+          showRates && invoice.extras.length > 0
+            ? `<tr><td>Time subtotal</td><td>${esc(formatMoney(invoice.total, currency))}</td></tr>
+               <tr><td>Additional items</td><td>${esc(formatMoney(invoice.extrasTotal, currency))}</td></tr>`
+            : ''
+        }
+        ${showRates ? `<tr class="grand"><td>Total due</td><td>${esc(formatMoney(invoice.grandTotal, currency))}</td></tr>` : ''}
       </tbody>
     </table>
   </div>

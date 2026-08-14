@@ -1,4 +1,4 @@
-import type { Entry, PeriodLabelMode, RoundingMode, Settings } from '../shared/types';
+import type { Entry, InvoiceExtra, PeriodLabelMode, RoundingMode, Settings } from '../shared/types';
 
 interface SettingsRow {
   timezone: string;
@@ -15,6 +15,7 @@ interface SettingsRow {
   currency: string;
   hourly_rate: number;
   invoice_footer: string;
+  summary_service_description: string;
   rounding_mode: string;
   rounding_increment: number;
   default_detailed_invoice: number;
@@ -52,6 +53,7 @@ function rowToSettings(row: SettingsRow): Settings {
     currency: row.currency,
     hourlyRate: row.hourly_rate,
     invoiceFooter: row.invoice_footer,
+    summaryServiceDescription: row.summary_service_description,
     roundingMode: ROUNDING_MODES.includes(row.rounding_mode as RoundingMode)
       ? (row.rounding_mode as RoundingMode)
       : 'exact',
@@ -99,6 +101,9 @@ export async function saveSettings(
   if (!ROUNDING_MODES.includes(next.roundingMode)) throw new HttpError(400, 'Invalid roundingMode');
   next.roundingIncrement = clampInt(next.roundingIncrement, 1, 480, current.roundingIncrement);
   if (!Number.isFinite(next.hourlyRate) || next.hourlyRate < 0) throw new HttpError(400, 'Invalid hourlyRate');
+  if (next.summaryServiceDescription.length > 200) {
+    throw new HttpError(400, 'Summary service description is too long (max 200 characters)');
+  }
   next.defaultDetailedInvoice = next.defaultDetailedInvoice !== false;
   next.defaultDetailedTimeLog = next.defaultDetailedTimeLog !== false;
   // A D1 row has a hard size ceiling; a logo is meant to be a small mark, not a photo.
@@ -113,7 +118,7 @@ export async function saveSettings(
          timezone = ?, invoice_period_day = ?, invoice_prefix = ?, invoice_start_seq = ?,
          invoice_start_month = ?, period_label_mode = ?, logo_data_url = ?, company_name = ?,
          company_address = ?, client_name = ?, client_address = ?, currency = ?, hourly_rate = ?,
-         invoice_footer = ?, rounding_mode = ?, rounding_increment = ?,
+         invoice_footer = ?, summary_service_description = ?, rounding_mode = ?, rounding_increment = ?,
          default_detailed_invoice = ?, default_detailed_time_log = ?, updated_at = ?
        WHERE id = 1`,
     )
@@ -121,7 +126,7 @@ export async function saveSettings(
       next.timezone, next.invoicePeriodDay, next.invoicePrefix, next.invoiceStartSeq,
       next.invoiceStartMonth, next.periodLabelMode, next.logoDataUrl, next.companyName,
       next.companyAddress, next.clientName, next.clientAddress, next.currency, next.hourlyRate,
-      next.invoiceFooter, next.roundingMode, next.roundingIncrement,
+      next.invoiceFooter, next.summaryServiceDescription, next.roundingMode, next.roundingIncrement,
       next.defaultDetailedInvoice ? 1 : 0, next.defaultDetailedTimeLog ? 1 : 0, next.updatedAt,
     )
     .run();
@@ -265,6 +270,96 @@ export async function suggestDescriptions(db: D1Database, query: string, limit =
     .bind(trimmed, like, limit)
     .all<{ description: string }>();
   return results.map((r) => r.description);
+}
+
+interface ExtraRow {
+  id: string;
+  period_key: string;
+  description: string;
+  amount: number;
+  created_at: number;
+  updated_at: number;
+}
+
+function rowToExtra(row: ExtraRow): InvoiceExtra {
+  return {
+    id: row.id,
+    periodKey: row.period_key,
+    description: row.description,
+    amount: row.amount,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** Hand-entered line items for one invoice period, oldest first. */
+export async function listExtras(db: D1Database, periodKey: string): Promise<InvoiceExtra[]> {
+  const { results } = await db
+    .prepare('SELECT * FROM invoice_extras WHERE period_key = ? ORDER BY created_at ASC, id ASC')
+    .bind(periodKey)
+    .all<ExtraRow>();
+  return results.map(rowToExtra);
+}
+
+/**
+ * Every extra, grouped by period key.
+ *
+ * The invoice list needs all of them at once to show correct totals; at personal
+ * scale that is one small query rather than one per period.
+ */
+export async function listAllExtras(db: D1Database): Promise<Map<string, InvoiceExtra[]>> {
+  const { results } = await db
+    .prepare('SELECT * FROM invoice_extras ORDER BY created_at ASC, id ASC')
+    .all<ExtraRow>();
+  const byPeriod = new Map<string, InvoiceExtra[]>();
+  for (const row of results) {
+    const extra = rowToExtra(row);
+    const bucket = byPeriod.get(extra.periodKey);
+    if (bucket) bucket.push(extra);
+    else byPeriod.set(extra.periodKey, [extra]);
+  }
+  return byPeriod;
+}
+
+export async function addExtra(
+  db: D1Database,
+  periodKey: string,
+  description: string,
+  amount: number,
+  now: number,
+): Promise<InvoiceExtra> {
+  const trimmed = description.trim();
+  if (trimmed === '') throw new HttpError(400, 'A line item needs a description');
+  if (trimmed.length > 300) throw new HttpError(400, 'Description is too long (max 300 characters)');
+  // Negatives are allowed on purpose: a discount or credit is a line item too.
+  if (!Number.isFinite(amount)) throw new HttpError(400, 'Amount must be a number');
+
+  const extra: InvoiceExtra = {
+    id: crypto.randomUUID(),
+    periodKey,
+    description: trimmed,
+    amount: Math.round(amount * 100) / 100,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db
+    .prepare(
+      `INSERT INTO invoice_extras (id, period_key, description, amount, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(extra.id, extra.periodKey, extra.description, extra.amount, extra.createdAt, extra.updatedAt)
+    .run();
+  return extra;
+}
+
+export async function deleteExtra(db: D1Database, periodKey: string, id: string): Promise<boolean> {
+  // Scoped by period as well as id so a stale form cannot delete another
+  // invoice's line item.
+  const res = await db
+    .prepare('DELETE FROM invoice_extras WHERE id = ? AND period_key = ?')
+    .bind(id, periodKey)
+    .run();
+  return (res.meta.changes ?? 0) > 0;
 }
 
 export class HttpError extends Error {

@@ -6,6 +6,7 @@ import {
   listPeriods,
   periodAt,
   roundSeconds,
+  summarisePeriod,
   summaryLine,
   summaryLineDescription,
 } from '../src/shared/invoice';
@@ -29,6 +30,7 @@ const base: Settings = {
   currency: 'ZAR',
   hourlyRate: 100,
   invoiceFooter: '',
+  summaryServiceDescription: 'Software development services',
   roundingMode: 'exact',
   roundingIncrement: 15,
   defaultDetailedInvoice: true,
@@ -271,7 +273,7 @@ describe('summary (non-detailed) invoice', () => {
 
   test('the description names the service and the period boundaries', () => {
     const period = periodAt(base, 0);
-    expect(summaryLineDescription(period, base.timezone)).toBe(
+    expect(summaryLineDescription(period, base)).toBe(
       'Software development services - 26 January 2026 to 26 February 2026',
     );
   });
@@ -279,8 +281,8 @@ describe('summary (non-detailed) invoice', () => {
   test('the description follows the configured timezone', () => {
     const settings = { ...base, timezone: 'Pacific/Kiritimati' }; // UTC+14
     const period = periodAt(settings, 0);
-    expect(summaryLineDescription(period, settings.timezone)).toContain('26 January 2026');
-    expect(summaryLineDescription(period, settings.timezone)).toContain('26 February 2026');
+    expect(summaryLineDescription(period, settings)).toContain('26 January 2026');
+    expect(summaryLineDescription(period, settings)).toContain('26 February 2026');
   });
 
   test('an empty period summarises to a zero line rather than breaking', () => {
@@ -288,6 +290,95 @@ describe('summary (non-detailed) invoice', () => {
     const line = summaryLine(invoice);
     expect(line.billedSeconds).toBe(0);
     expect(line.amount).toBe(0);
+  });
+});
+
+describe('extra line items', () => {
+  const now = at(2026, 3, 1, 12);
+  const entries = [entry('a', 'Build', at(2026, 2, 27, 9), at(2026, 2, 27, 11))]; // 2h @ 100 = 200
+  const extra = (id: string, description: string, amount: number) => ({
+    id,
+    periodKey: '2026-02',
+    description,
+    amount,
+    createdAt: 0,
+    updatedAt: 0,
+  });
+
+  test('extras are added to the time total without disturbing it', () => {
+    const invoice = buildInvoice(periodAt(base, 1), base, entries, now, [
+      extra('x', 'AWS reimbursement', 42.5),
+      extra('y', 'Licence', 100),
+    ]);
+    expect(invoice.total).toBe(200); // time only
+    expect(invoice.extrasTotal).toBe(142.5);
+    expect(invoice.grandTotal).toBe(342.5);
+    // Hours are unaffected by money that was never tracked.
+    expect(invoice.billedSeconds).toBe(2 * 3600);
+  });
+
+  test('a negative extra acts as a discount', () => {
+    const invoice = buildInvoice(periodAt(base, 1), base, entries, now, [extra('d', 'Goodwill discount', -50)]);
+    expect(invoice.extrasTotal).toBe(-50);
+    expect(invoice.grandTotal).toBe(150);
+  });
+
+  test('extras alone can carry an invoice with no tracked time', () => {
+    const invoice = buildInvoice(periodAt(base, 1), base, [], now, [extra('x', 'Retainer', 500)]);
+    expect(invoice.lines).toEqual([]);
+    expect(invoice.total).toBe(0);
+    expect(invoice.grandTotal).toBe(500);
+  });
+
+  test('no extras leaves the grand total equal to the time total', () => {
+    const invoice = buildInvoice(periodAt(base, 1), base, entries, now);
+    expect(invoice.extras).toEqual([]);
+    expect(invoice.extrasTotal).toBe(0);
+    expect(invoice.grandTotal).toBe(invoice.total);
+  });
+
+  test('fractional amounts sum without floating-point drift', () => {
+    const invoice = buildInvoice(periodAt(base, 1), base, [], now, [
+      extra('a', 'One', 0.1),
+      extra('b', 'Two', 0.2),
+    ]);
+    expect(invoice.extrasTotal).toBe(0.3);
+    expect(invoice.grandTotal).toBe(0.3);
+  });
+
+  test('the summary line still reports time only, so extras are never double-counted', () => {
+    const invoice = buildInvoice(periodAt(base, 1), base, entries, now, [extra('x', 'Licence', 100)]);
+    const line = summaryLine(invoice);
+    expect(line.amount).toBe(invoice.total);
+    expect(line.amount + invoice.extrasTotal).toBe(invoice.grandTotal);
+  });
+
+  test('period summaries carry the same figures as the document', () => {
+    const period = periodAt(base, 1);
+    const extras = [extra('x', 'Licence', 100)];
+    const summary = summarisePeriod(period, base, entries, now, extras);
+    const invoice = buildInvoice(period, base, entries, now, extras);
+    expect(summary.grandTotal).toBe(invoice.grandTotal);
+    expect(summary.extrasTotal).toBe(invoice.extrasTotal);
+    expect(summary.extrasCount).toBe(1);
+  });
+});
+
+describe('configurable summary wording', () => {
+  test('the setting replaces the service wording', () => {
+    const settings = { ...base, summaryServiceDescription: 'Consulting retainer' };
+    expect(summaryLineDescription(periodAt(settings, 0), settings)).toBe(
+      'Consulting retainer - 26 January 2026 to 26 February 2026',
+    );
+  });
+
+  test('a blank setting falls back rather than producing a dangling dash', () => {
+    for (const value of ['', '   ']) {
+      const settings = { ...base, summaryServiceDescription: value };
+      expect(summaryLineDescription(periodAt(settings, 0), settings)).toBe(
+        'Software development services - 26 January 2026 to 26 February 2026',
+      );
+    }
   });
 });
 

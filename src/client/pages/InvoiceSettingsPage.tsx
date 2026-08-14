@@ -1,7 +1,13 @@
 import { useMemo, useRef, useState } from 'react';
 import type { RoundingMode, Settings } from '../../shared/types';
 import { MONTH_NAMES, formatLongDate, monthKey, parseMonthKey, toZonedParts } from '../../shared/time';
-import { describeRounding, listPeriods, periodAt, roundSeconds } from '../../shared/invoice';
+import {
+  DEFAULT_SUMMARY_SERVICE_DESCRIPTION,
+  describeRounding,
+  listPeriods,
+  periodAt,
+  roundSeconds,
+} from '../../shared/invoice';
 import { api } from '../api';
 
 interface Props {
@@ -268,6 +274,21 @@ export function InvoiceSettingsPage({ settings, onSaved }: Props) {
             <small>
               Applied to each line item — that is, once per distinct task description — not to each
               timer run and not to the grand total. <RoundingExample settings={draft} />
+            </small>
+          </label>
+
+          <label>
+            <span>Summary line wording</span>
+            <input
+              type="text"
+              value={draft.summaryServiceDescription}
+              onChange={(e) => set('summaryServiceDescription', e.target.value)}
+              placeholder={DEFAULT_SUMMARY_SERVICE_DESCRIPTION}
+            />
+            <small>
+              Used when “Detailed invoice” is off. The period dates are appended automatically:
+              “{(draft.summaryServiceDescription.trim() || DEFAULT_SUMMARY_SERVICE_DESCRIPTION)} -{' '}
+              {periodExample(draft)}”.
             </small>
           </label>
 
