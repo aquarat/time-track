@@ -247,8 +247,8 @@ Other behaviour worth knowing:
 ## The invoice document
 
 `/invoice/2026-06` is server-rendered HTML laid out for A4. Print or Save-as-PDF from the
-browser. It carries the logo, both addresses, line items, totals, the rounding note, an
-optional day-by-day time log, and your footer.
+browser. It carries the logo, both addresses, line items, totals, an optional day-by-day
+time log, and your footer.
 
 ### Layout toggles
 
@@ -256,7 +256,7 @@ Two checkboxes in the document's toolbar (neither prints):
 
 | | On | Off |
 |---|---|---|
-| **Detailed invoice** | One line per task description | A single line: *Software development services - 26 January 2026 to 26 February 2026* |
+| **Detailed invoice** | One line per task description, with a raw *Tracked* column and total alongside the billed hours | A single line — *Software development services - 26 January 2026 to 26 February 2026* — and no *Tracked* figures |
 | **Detailed time log** | Day-by-day breakdown, starting on its own page | Omitted entirely |
 
 **The amount due is identical either way.** Rounding is applied per task description, and

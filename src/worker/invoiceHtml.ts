@@ -6,7 +6,7 @@
  */
 
 import type { Invoice, InvoiceLayout, InvoiceLine } from '../shared/types';
-import { describeRounding, formatHours, formatMoney, summaryLine } from '../shared/invoice';
+import { formatHours, formatMoney, summaryLine } from '../shared/invoice';
 import { formatClock, formatCompact, formatLongDate } from '../shared/time';
 
 function esc(value: string): string {
@@ -42,6 +42,11 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
   const lines: InvoiceLine[] = layout.detailedInvoice ? invoice.lines : [summaryLine(invoice)];
   const showLog = layout.detailedTimeLog && details.length > 0;
 
+  // Raw tracked time is context for a per-task breakdown; against a single
+  // summary line it just invites the client to query the difference.
+  const showTracked = layout.detailedInvoice;
+  const columnCount = 2 + (showTracked ? 1 : 0) + (showRates ? 2 : 0);
+
   const noticeBanner = invoice.inProgress
     ? `<div class="notice">This period is still open — it ends on ${esc(inclusiveEnd(period.endUtc, s.timezone))}.${
         invoice.hasRunningEntry ? ' A timer is currently running and is billed up to the moment this page was generated.' : ''
@@ -52,7 +57,7 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
     .map(
       (l) => `<tr>
       <td class="desc">${esc(l.description)}</td>
-      <td class="num tracked">${esc(formatCompact(l.rawSeconds))}</td>
+      ${showTracked ? `<td class="num tracked">${esc(formatCompact(l.rawSeconds))}</td>` : ''}
       <td class="num">${esc(formatHours(l.billedSeconds))}</td>
       ${showRates ? `<td class="num">${esc(formatMoney(s.hourlyRate, currency))}</td>` : ''}
       ${showRates ? `<td class="num">${esc(formatMoney(l.amount, currency))}</td>` : ''}
@@ -60,7 +65,7 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
     )
     .join('\n');
 
-  const emptyRow = `<tr><td class="desc empty" colspan="${showRates ? 5 : 3}">No time tracked in this period.</td></tr>`;
+  const emptyRow = `<tr><td class="desc empty" colspan="${columnCount}">No time tracked in this period.</td></tr>`;
 
   const detailRows = details
     .map((day) => {
@@ -80,15 +85,6 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
       ${entries}`;
     })
     .join('\n');
-
-  // On a summary invoice "each line item" would be misleading — there is only
-  // one line, but the rounding still happened per underlying task.
-  const roundingNote =
-    s.roundingMode === 'exact'
-      ? ''
-      : `<p class="rounding-note">${esc(describeRounding(s))}. Rounding is applied ${
-          layout.detailedInvoice ? 'to each line item' : 'per task before totalling'
-        }. Tracked time is shown for reference.</p>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -144,8 +140,16 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
   .layout-form label:hover { border-color: var(--accent); }
   .layout-form input[type="checkbox"] { margin: 0; cursor: pointer; }
 
-  header.masthead { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
-  .logo img { max-height: 64px; max-width: 220px; object-fit: contain; }
+  /* stretch lets .logo take the title block's height, so the image can be sized
+     against it and bottom-aligned with the period/timezone line. */
+  header.masthead { display: flex; justify-content: space-between; align-items: stretch; gap: 24px; }
+  .logo { display: flex; align-items: flex-end; min-width: 0; }
+  .logo img {
+    max-height: 100%;
+    max-width: 300px;
+    object-fit: contain;
+    object-position: left bottom;
+  }
   .title { text-align: right; }
   .title h1 { margin: 0; font-size: 26px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600; }
   .title .number { margin-top: 4px; font-size: 15px; font-weight: 600; }
@@ -182,7 +186,6 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
   .totals tr.grand td { padding-top: 8px; border-top: 1px solid var(--accent); font-weight: 700; font-size: 15px; }
   .totals tr.grand td:first-child { color: var(--ink); }
 
-  .rounding-note { margin-top: 12px; color: var(--muted); font-size: 11px; }
 
   /* The log lives on its own sheet so it always starts a fresh page. */
   .detail-sheet { margin-top: 24px; }
@@ -275,7 +278,7 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
     <thead>
       <tr>
         <th>Description</th>
-        <th class="num">Tracked</th>
+        ${showTracked ? '<th class="num">Tracked</th>' : ''}
         <th class="num">Hours</th>
         ${showRates ? '<th class="num">Rate</th>' : ''}
         ${showRates ? '<th class="num">Amount</th>' : ''}
@@ -289,7 +292,7 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
   <div class="totals">
     <table>
       <tbody>
-        <tr><td>Tracked</td><td>${esc(formatCompact(invoice.rawSeconds))}</td></tr>
+        ${showTracked ? `<tr><td>Tracked</td><td>${esc(formatCompact(invoice.rawSeconds))}</td></tr>` : ''}
         <tr><td>Billable hours</td><td>${esc(formatHours(invoice.billedSeconds))}</td></tr>
         ${showRates ? `<tr><td>Rate</td><td>${esc(formatMoney(s.hourlyRate, currency))} / hour</td></tr>` : ''}
         ${showRates ? `<tr class="grand"><td>Total due</td><td>${esc(formatMoney(invoice.total, currency))}</td></tr>` : ''}
@@ -297,7 +300,6 @@ export function renderInvoiceHtml(invoice: Invoice, layout: InvoiceLayout): stri
     </table>
   </div>
 
-  ${roundingNote}
 
   ${s.invoiceFooter ? `<footer class="pay">${multiline(s.invoiceFooter)}</footer>` : ''}
 </div>
