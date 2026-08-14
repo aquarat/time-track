@@ -96,13 +96,17 @@ bun run deploy
 is on the account. `workers_dev` is deliberately `false`, because a live `*.workers.dev`
 hostname would sit outside the Access policy below.
 
-## Locking it down with Cloudflare Access
+## Cloudflare Access
+
+To set it up, or to change who gets in:
 
 1. Zero Trust → Access → Applications → **Add a self-hosted application**.
 2. Domain `time-track.example.com`, path blank (protect everything).
-3. Add a policy: Action **Allow**, rule `Emails` → your address.
+3. Add exactly one policy: Action **Allow**, rule `Emails` → the addresses that should get
+   in. Resist adding a second policy that includes `everyone` — a permissive policy at any
+   precedence supersedes the restrictive one.
 4. Copy the **Application Audience (AUD) tag** from the app's Overview tab.
-5. Put your team domain and that AUD into `wrangler.jsonc` `vars`:
+5. Put the team domain and that AUD into `wrangler.jsonc` `vars`:
 
 ```jsonc
 "vars": {
@@ -112,6 +116,9 @@ hostname would sit outside the Access policy below.
 ```
 
 6. `bun run deploy`.
+
+Neither value is a secret — both are already in the JWT the browser holds — so they live in
+`wrangler.jsonc` rather than in `wrangler secret`.
 
 Access blocks unauthenticated requests at the edge; the Worker independently verifies the
 signed `Cf-Access-Jwt-Assertion` (issuer, audience, expiry, RS256 signature against the

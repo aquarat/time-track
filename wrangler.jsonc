@@ -37,14 +37,15 @@
   "vars": {
     // Cloudflare Access enforcement (see README "Locking it down").
     //
-    // Non-empty values switch the gate on. These placeholders can never match a
-    // real assertion, so the deployed app denies every request until the Access
-    // application exists and the real values are filled in — it fails closed,
-    // which is the safe state to sit in while the Zero Trust side is set up.
+    // ACCESS_AUD is the "Time Track" Access application's Audience tag. It pins
+    // the Worker to that one application: without it, any valid token issued to
+    // the same Zero Trust team — including from the other apps on this account —
+    // would be accepted here.
     //
-    // EMPTY strings disable verification entirely. That is intended only for
-    // `wrangler dev`; never deploy with them blank.
-    "ACCESS_TEAM_DOMAIN": "CONFIGURE-ME.cloudflareaccess.com",
+    // Neither value is a secret; both appear in the JWT the browser already
+    // holds. EMPTY strings disable verification entirely, which is intended only
+    // for `wrangler dev` — never deploy with them blank.
+    "ACCESS_TEAM_DOMAIN": "yourteam.cloudflareaccess.com",
     "ACCESS_AUD": "CONFIGURE-ME"
   },
 
