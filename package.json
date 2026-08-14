@@ -1,0 +1,30 @@
+{
+  "name": "time-track",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:worker": "wrangler dev",
+    "build": "tsc -b && vite build",
+    "deploy": "bun run build && wrangler deploy",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false",
+    "db:migrate:local": "wrangler d1 migrations apply time-track --local",
+    "db:migrate": "wrangler d1 migrations apply time-track --remote",
+    "seed:dev": "bun scripts/seed-dev.ts",
+    "test": "bun test",
+    "cf-typegen": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260814.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "wrangler": "^4.123.0"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  }
+}

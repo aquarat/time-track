@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "time-track",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-01",
+
+  // Only serve from the custom domain, which sits behind Cloudflare Access.
+  // Leaving workers.dev enabled would expose an un-Access'd hostname.
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "time-track.example.com",
+      "custom_domain": true
+    }
+  ],
+
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Every request goes through the Worker so the Access check covers the SPA
+    // shell too, not just /api/*. Scoping this to API routes would let the asset
+    // worker serve HTML without ever consulting the gate. The Worker falls
+    // through to env.ASSETS for anything it does not handle itself.
+    "run_worker_first": true
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "time-track",
+      "database_id": "REPLACE_WITH_DATABASE_ID",
+      "migrations_dir": "./migrations"
+    }
+  ],
+
+  "vars": {
+    // Set these to enforce Cloudflare Access at the Worker (see README).
+    // Empty values disable verification — fine for `wrangler dev`, not for production.
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": ""
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}
