@@ -75,7 +75,7 @@ All routes are JSON except `/invoice/:period`, and all sit behind the Access che
 Client clocks are never trusted for billing: `now` always comes from the Worker, so a
 running timer is valued against server time.
 
-## First-time setup
+## First-time setup (from scratch)
 
 ```bash
 bun install
@@ -91,10 +91,10 @@ bun run db:migrate:local      # local dev copy
 bun run deploy
 ```
 
-Then attach the custom domain. `wrangler.jsonc` already declares
-`time-track.example.com` as a custom domain route, so `bun run deploy` will claim it
-provided the zone is on your account. `workers_dev` is deliberately `false` — a live
-`*.workers.dev` hostname would sit outside the Access policy below.
+`wrangler.jsonc` declares `time-track.example.com` as a custom domain route, so
+`bun run deploy` claims it — including the DNS record and certificate — provided the zone
+is on the account. `workers_dev` is deliberately `false`, because a live `*.workers.dev`
+hostname would sit outside the Access policy below.
 
 ## Locking it down with Cloudflare Access
 

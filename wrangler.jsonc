@@ -29,16 +29,23 @@
     {
       "binding": "DB",
       "database_name": "time-track",
-      "database_id": "REPLACE_WITH_DATABASE_ID",
+      "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "./migrations"
     }
   ],
 
   "vars": {
-    // Set these to enforce Cloudflare Access at the Worker (see README).
-    // Empty values disable verification — fine for `wrangler dev`, not for production.
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": ""
+    // Cloudflare Access enforcement (see README "Locking it down").
+    //
+    // Non-empty values switch the gate on. These placeholders can never match a
+    // real assertion, so the deployed app denies every request until the Access
+    // application exists and the real values are filled in — it fails closed,
+    // which is the safe state to sit in while the Zero Trust side is set up.
+    //
+    // EMPTY strings disable verification entirely. That is intended only for
+    // `wrangler dev`; never deploy with them blank.
+    "ACCESS_TEAM_DOMAIN": "CONFIGURE-ME.cloudflareaccess.com",
+    "ACCESS_AUD": "CONFIGURE-ME"
   },
 
   "observability": {
