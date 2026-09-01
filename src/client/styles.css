@@ -755,6 +755,11 @@ button:disabled {
 .settings-page form {
   max-width: 640px;
 }
+/* Sits outside the form (it posts nothing) but should line up with it. */
+.settings-page .export-fieldset {
+  max-width: 640px;
+  margin-top: 24px;
+}
 fieldset {
   border: 1px solid var(--rule);
   border-radius: var(--radius);

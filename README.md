@@ -93,6 +93,8 @@ All routes are JSON except `/invoice/:period`, and all sit behind the Access che
 | `POST` | `/api/timer/stop` | Stop the running timer |
 | `GET` | `/api/suggestions?q=` | Past descriptions, most-recently-used first |
 | `GET` | `/api/settings` · `PUT` | Read / update the settings row |
+| `GET` | `/api/export/entries.csv` | Every completed entry as a Toggl-compatible CSV download |
+| `GET` | `/api/export/backup.json` | Full backup download: settings, clients, entries, line items |
 | `GET` | `/api/invoices` | All periods that have begun, with totals |
 | `GET` | `/api/invoices/:period` | One invoice as JSON (`:period` is `YYYY-MM`) |
 | `GET` | `/invoice/:period` | The same invoice as print-ready HTML |
@@ -355,6 +357,26 @@ Other behaviour worth knowing:
 - **Bad rows never cost you the good ones** — each is listed with its line number.
 - The preview breaks the import down **per invoice period**, so you can see exactly which
   invoices it will change before committing.
+
+## Export & backup
+
+Two download links on the **Settings** page, both plain GETs behind the same Access check
+as everything else:
+
+- **`/api/export/entries.csv`** — every completed entry across all clients, with wall-clock
+  times in the app's configured timezone. The columns are exactly the ones the Toggl
+  importer reads, so the file round-trips through the Import page (there is a test for
+  this). A still-running entry is excluded rather than given an invented end, which would
+  also corrupt duplicate detection on re-import.
+- **`/api/export/backup.json`** — the complete database contents as JSON: settings,
+  clients, all entries (including a running one) and invoice extras, wrapped in
+  `{ format: "time-track-backup", version: 1, exportedAt }`.
+
+Filenames are dated in the configured timezone, e.g. `time-track-backup-2026-09-01.json`.
+
+For a restorable server-side snapshot there is also `wrangler d1 export time-track
+--remote --output backups/backup-<date>.sql`, which produces SQL that can be replayed with
+`wrangler d1 execute`.
 
 ## The invoice document
 

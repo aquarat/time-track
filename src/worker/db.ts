@@ -338,6 +338,14 @@ export async function listEntries(
   return results.map(rowToEntry);
 }
 
+/** Every entry there is, oldest first — the export/backup path. */
+export async function listAllEntries(db: D1Database): Promise<Entry[]> {
+  const { results } = await db
+    .prepare('SELECT * FROM entries ORDER BY started_at ASC, id ASC')
+    .all<EntryRow>();
+  return results.map(rowToEntry);
+}
+
 export async function getRunningEntry(db: D1Database): Promise<Entry | null> {
   const row = await db
     .prepare('SELECT * FROM entries WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1')
@@ -543,6 +551,14 @@ export async function listAllExtras(
     else byPeriod.set(extra.periodKey, [extra]);
   }
   return byPeriod;
+}
+
+/** Every hand-entered line item across all clients and periods — the export/backup path. */
+export async function listEveryExtra(db: D1Database): Promise<InvoiceExtra[]> {
+  const { results } = await db
+    .prepare('SELECT * FROM invoice_extras ORDER BY period_key ASC, created_at ASC, id ASC')
+    .all<ExtraRow>();
+  return results.map(rowToExtra);
 }
 
 export async function addExtra(

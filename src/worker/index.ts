@@ -1,5 +1,7 @@
 import type { Client, Entry, InvoiceLayout, Settings } from '../shared/types';
 import { buildInvoice, findPeriod, invoiceConfig, listPeriods, summarisePeriod } from '../shared/invoice';
+import { entriesToCsv } from '../shared/exportCsv';
+import { dateKey } from '../shared/time';
 import { renderInvoiceHtml } from './invoiceHtml';
 import { requireAccess } from './access';
 import { runImport } from './import';
@@ -19,7 +21,9 @@ import {
   getRunningEntry,
   getSettings,
   insertEntry,
+  listAllEntries,
   listEntries,
+  listEveryExtra,
   saveSettings,
   startEntry,
   stopRunningEntries,
@@ -44,7 +48,10 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/api/')) {
-        return json(await handleApi(request, env, url, now));
+        // Most routes answer with a JSON body; the export routes build their
+        // own Response so they can set download headers.
+        const result = await handleApi(request, env, url, now);
+        return result instanceof Response ? result : json(result);
       }
       if (url.pathname.startsWith('/invoice/')) {
         return await handleInvoiceRoutes(request, env, url, now);
@@ -212,6 +219,46 @@ async function handleApi(request: Request, env: Env, url: URL, now: number): Pro
         url.searchParams.get('clientId'),
       ),
     };
+  }
+
+  // --- export & backup ----------------------------------------------------
+  // Both are plain GETs so the Settings page can offer them as ordinary links;
+  // the browser sends the Access cookie and receives a file download.
+  if (path === '/export/entries.csv' && method === 'GET') {
+    const [settings, clients, entries] = await Promise.all([
+      getSettings(db),
+      listClients(db),
+      listAllEntries(db),
+    ]);
+    const csv = entriesToCsv(
+      entries,
+      new Map(clients.map((c) => [c.id, c.name])),
+      settings.timezone,
+    );
+    return download(csv, 'text/csv', `time-track-entries-${dateKey(now, settings.timezone)}.csv`);
+  }
+
+  if (path === '/export/backup.json' && method === 'GET') {
+    const [settings, clients, entries, invoiceExtras] = await Promise.all([
+      getSettings(db),
+      listClients(db),
+      listAllEntries(db),
+      listEveryExtra(db),
+    ]);
+    const backup = {
+      format: 'time-track-backup',
+      version: 1,
+      exportedAt: now,
+      settings,
+      clients,
+      entries,
+      invoiceExtras,
+    };
+    return download(
+      JSON.stringify(backup, null, 2),
+      'application/json',
+      `time-track-backup-${dateKey(now, settings.timezone)}.json`,
+    );
   }
 
   // --- invoices -----------------------------------------------------------
@@ -385,6 +432,16 @@ function numberParam(url: URL, name: string): number | null {
   if (raw === null) return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
+}
+
+function download(body: string, contentType: string, filename: string): Response {
+  return new Response(body, {
+    headers: {
+      'Content-Type': `${contentType}; charset=utf-8`,
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
+  });
 }
 
 function json(body: unknown, status = 200): Response {

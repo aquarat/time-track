@@ -193,6 +193,40 @@ export function SettingsPage({ settings, clients, onSaved, onNavigate }: Props) 
           {status && <span className="status-ok">{status}</span>}
         </div>
       </form>
+
+      <fieldset className="export-fieldset">
+        <legend>Export &amp; backup</legend>
+        <p className="fieldset-intro">
+          Both are ordinary downloads of what is in the database right now.
+        </p>
+
+        <label>
+          <span>Time entries (CSV)</span>
+          <div>
+            <a className="button-link" href="/api/export/entries.csv" download>
+              Download entries CSV
+            </a>
+          </div>
+          <small>
+            Every completed entry across all clients, with wall-clock times in{' '}
+            <code>{settings.timezone}</code>. Toggl-compatible columns, so the file re-imports
+            cleanly on the Import page.
+          </small>
+        </label>
+
+        <label>
+          <span>Full backup (JSON)</span>
+          <div>
+            <a className="button-link" href="/api/export/backup.json" download>
+              Download backup JSON
+            </a>
+          </div>
+          <small>
+            Everything: settings, clients, all time entries (including a running timer) and
+            invoice line items.
+          </small>
+        </label>
+      </fieldset>
     </div>
   );
 }
