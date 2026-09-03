@@ -219,7 +219,7 @@ export function Timeline({ days, clients, tz, now, resizable, onPickDay, onSelec
                   );
                 })}
 
-                {isToday(day, tz, now) && (
+                {isToday(day, tz, now) && withinWindow(now, day, window) && (
                   <div
                     className="now-line"
                     style={{ top: `${(((now - day.start) / HOUR_MS - window.start) / span) * 100}%` }}
@@ -281,6 +281,24 @@ function assignLanes(items: DayBucket['items']): { index: number; total: number 
   if (cluster.length > 0) closeCluster();
 
   return lanes;
+}
+
+/**
+ * Whether `now` falls inside the rendered hour window.
+ *
+ * The window is derived from the entries, not the clock, so outside it the
+ * now-line's percentage position is past the timeline body and the absolutely
+ * positioned line would land on whatever sits below. When a timer is running
+ * the entry itself extends the window, so the line is only ever hidden when
+ * there is nothing for it to point at.
+ */
+function withinWindow(
+  now: number,
+  day: DayBucket,
+  window: { start: number; end: number },
+): boolean {
+  const hour = (now - day.start) / HOUR_MS;
+  return hour >= window.start && hour <= window.end;
 }
 
 function isToday(day: DayBucket, tz: string, now: number): boolean {
