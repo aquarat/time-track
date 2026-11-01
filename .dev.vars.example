@@ -1,8 +1,11 @@
 # Copy to .dev.vars for local development.
 #
-# wrangler.jsonc carries the real Access values for production, and `wrangler dev`
-# inherits them — which makes the local server reject every request, since there is
-# no Zero Trust session in front of localhost. Blanking them here turns the gate off
-# locally only. .dev.vars is gitignored and is never uploaded by `wrangler deploy`.
+# wrangler.jsonc holds the production Access values (placeholders in the public
+# repository), and `wrangler dev` inherits them, so with no Zero Trust session in
+# front of localhost the Worker would refuse every request. Blanking them and
+# setting ALLOW_UNAUTHENTICATED turns the gate off locally. Never set
+# ALLOW_UNAUTHENTICATED anywhere else: .dev.vars is gitignored and is never
+# uploaded by `wrangler deploy`, which is what keeps it local.
 ACCESS_TEAM_DOMAIN=
 ACCESS_AUD=
+ALLOW_UNAUTHENTICATED=true

@@ -36,6 +36,8 @@ export interface Env {
   ASSETS: Fetcher;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  /** Local development only (.dev.vars); see requireAccess. */
+  ALLOW_UNAUTHENTICATED?: string;
 }
 
 export default {

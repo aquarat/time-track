@@ -139,17 +139,26 @@ function readCookie(header: string | null, name: string): string | null {
 /**
  * Gate a request. Returns null to continue, or a Response to short-circuit.
  *
- * When the Access vars are unset, verification is skipped so `wrangler dev` works
- * offline. Deploying without them leaves the app open, which the README calls out.
+ * Fails closed: with the Access vars unset, every request is refused unless
+ * `ALLOW_UNAUTHENTICATED` is exactly "true". That opt-out exists for
+ * `wrangler dev` and belongs only in `.dev.vars`, which is gitignored and never
+ * uploaded by `wrangler deploy`. It cannot be scoped to localhost from in here:
+ * `wrangler dev` rewrites the request URL to the first route's hostname.
  */
 export async function requireAccess(
   request: Request,
-  env: { ACCESS_TEAM_DOMAIN?: string; ACCESS_AUD?: string },
+  env: { ACCESS_TEAM_DOMAIN?: string; ACCESS_AUD?: string; ALLOW_UNAUTHENTICATED?: string },
   now: number,
 ): Promise<Response | null> {
   const teamDomain = (env.ACCESS_TEAM_DOMAIN ?? '').trim();
   const aud = (env.ACCESS_AUD ?? '').trim();
-  if (teamDomain === '' || aud === '') return null;
+  if (teamDomain === '' || aud === '') {
+    if ((env.ALLOW_UNAUTHENTICATED ?? '').trim() === 'true') return null;
+    return new Response(
+      'Cloudflare Access is not configured: set ACCESS_TEAM_DOMAIN and ACCESS_AUD',
+      { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } },
+    );
+  }
 
   let identity: AccessIdentity | null = null;
   try {
