@@ -1,422 +1,341 @@
 # Time Track
 
-A small time tracker with deterministic invoicing.
+A small, self-hosted time tracker with deterministic invoicing, running entirely on
+Cloudflare (one Worker, one D1 database, Cloudflare Access in front).
 
-Toggl's invoicing asks you to re-specify a date range and report options every single
-time. Here the invoice period, sequence number, rounding rule and footer are configured
-once; every invoice after that is a pure function of those settings and your tracked time.
-Opening an invoice is one click and asks no questions.
+Most time trackers make you re-specify a date range and report options every time you
+invoice. Here the invoice period, sequence number, rate, rounding rule and footer are
+configured once per client; every invoice after that is a pure function of those settings
+and your tracked time. Opening an invoice is one click and asks no questions, and nothing
+about an invoice is stored, so numbering cannot drift, skip or double-issue.
+
+It is single-tenant: one instance per person, with Cloudflare Access deciding who that is.
+
+## Features
+
+- **Timer** with a description box that stays editable while it runs, most-recently-used
+  autocomplete, and a live clock.
+- **Calendar** in day, week and month views: hour gridlines, a now-line, side-by-side lanes
+  for overlapping entries, a month heatmap, and untracked gaps of five minutes or more.
+  Click a block to edit it; drag its edges in the day view.
+- **Multiple clients**, each with its own invoice series, rate, currency, period day,
+  rounding, payment terms and calendar colour.
+- **Invoices** as print-ready A4 HTML (print or save as PDF from the browser), with
+  detailed or summary layouts, an optional day-by-day time log, and hand-entered line items
+  for expenses, fixed fees or discounts.
+- **Toggl Track import** from a detailed CSV export, previewed before anything is written.
+- **Export** as a Toggl-compatible CSV or a complete JSON backup.
+- Works on phones, and the tab icon shows whether a timer is running.
 
 ## Stack
 
 - **One Cloudflare Worker** serving both the API and the React SPA via Static Assets.
-  (Cloudflare recommends this over Pages for new projects; Pages no longer gets new features.)
-- **D1** for all storage — time entries and the single settings row.
+- **D1** for all storage.
 - **Cloudflare Access** for authentication, verified again inside the Worker.
-- **Bun** for installing, building and testing. **Vite + React + TypeScript** for the client.
-
-## Layout
+- **Bun** for installing, building and testing; **Vite + React + TypeScript** for the
+  client.
 
 ```
-src/shared/    time.ts (timezone maths), invoice.ts (period + rounding), types.ts
+src/shared/    time.ts (timezone maths), invoice.ts (periods + rounding), types.ts
 src/worker/    index.ts (router), db.ts (D1), access.ts (JWT), invoiceHtml.ts (print doc)
 src/client/    App.tsx, pages/, components/
 migrations/    D1 schema
-tests/         invoice + calendar maths
+scripts/       configure.ts (fills wrangler.jsonc), seed-dev.ts (local sample data)
+tests/         invoice, calendar, import/export and access-gate tests
 ```
 
-`src/shared` is imported by both the Worker and the browser, so the invoice you see in the
-settings preview is computed by exactly the same code that renders the final document.
+`src/shared` is imported by both the Worker and the browser, so what you see in the app
+is computed by exactly the same code that renders the final invoice.
 
-**`InvoiceConfig`** is the seam that makes multiple clients cheap. Every invoice function
-takes one flat object whose field names are the ones they used when there was a single
-client; `invoiceConfig(settings, client)` assembles it from the global row plus one client.
-Adding clients therefore did not require rewriting the invoice maths or the document
-renderer — only changing what gets passed in.
+## Deploying your own instance
 
-## Data model
+You need a Cloudflare account with a zone (domain) on it, and [Bun](https://bun.sh).
+Cloudflare Access is part of Zero Trust, whose free plan covers this.
 
-Two tables, both in D1 (`migrations/0001_init.sql`).
-
-**`entries`** — one row per tracked block.
-
-| Column | Notes |
-|---|---|
-| `id` | UUID |
-| `description` | Free text, `''` allowed |
-| `started_at` | UTC epoch **milliseconds** |
-| `ended_at` | UTC epoch ms, or `NULL` while the timer runs |
-| `created_at`, `updated_at` | UTC epoch ms |
-
-A partial index on `ended_at WHERE ended_at IS NULL` keeps "is a timer running?" a point
-lookup. At most one row may have `ended_at IS NULL`; starting a timer, or reopening an
-entry via `PATCH`, closes any other open row first.
-
-**`clients`** — one row per billable client: identity (`slug`, `name`, `address`, `colour`),
-invoice series (`invoice_period_day`, `invoice_prefix`, `invoice_start_seq`,
-`invoice_start_month`, `period_label_mode`), terms (`currency`, `hourly_rate`, rounding) and
-document defaults (footer, summary wording, layout). Each client's invoice series is
-independent of every other's.
-
-**`settings`** — a single row pinned by `CHECK (id = 1)`, holding only what belongs to you
-rather than to a client: timezone, logo, your name and address, and `default_client_id`.
-There is no users table: the app is single-tenant by construction, and identity is handled
-entirely by Cloudflare Access.
-
-> Migration `0004` deliberately left the old client-specific columns on `settings` in place,
-> unread. That kept the migration purely additive, so the previous Worker version still runs
-> against the current schema and `wrangler rollback` remains a complete rollback. They can be
-> dropped in a later migration.
-
-**`invoice_extras`** — hand-entered line items, keyed by `period_key` (`"YYYY-MM"`, the same
-identifier the invoice URL uses). Amounts may be negative, which is how a discount or credit
-is expressed.
-
-Nothing else about an invoice is stored. The rest is derived on read from `settings` +
-`entries`, which is what makes numbering impossible to corrupt. Note that a period key's
-meaning depends on the period day and the naming convention, so changing either re-points
-existing extras at a different date range — the same caveat that already applies to invoice
-numbering.
-
-## API
-
-All routes are JSON except `/invoice/:period`, and all sit behind the Access check.
-
-| Method | Route | Purpose |
-|---|---|---|
-| `GET` | `/api/state` | Settings, the running entry (if any), and server time |
-| `GET` | `/api/entries?from=&to=` | Entries overlapping a UTC-ms window |
-| `POST` | `/api/entries` | Create a completed entry (manual logging) |
-| `PATCH` | `/api/entries/:id` | Edit description, `startedAt`, `endedAt` |
-| `DELETE` | `/api/entries/:id` | Remove an entry |
-| `POST` | `/api/timer/start` | Stop any running timer, start a new one |
-| `POST` | `/api/timer/stop` | Stop the running timer |
-| `GET` | `/api/suggestions?q=` | Past descriptions, most-recently-used first |
-| `GET` | `/api/settings` · `PUT` | Read / update the settings row |
-| `GET` | `/api/export/entries.csv` | Every completed entry as a Toggl-compatible CSV download |
-| `GET` | `/api/export/backup.json` | Full backup download: settings, clients, entries, line items |
-| `GET` | `/api/invoices` | All periods that have begun, with totals |
-| `GET` | `/api/invoices/:period` | One invoice as JSON (`:period` is `YYYY-MM`) |
-| `GET` | `/invoice/:period` | The same invoice as print-ready HTML |
-| `POST` | `/invoice/:period/extras` | Add a line item (form post, redirects back) |
-| `POST` | `/invoice/:period/extras/:id/delete` | Remove one (form post, redirects back) |
-
-Client clocks are never trusted for billing: `now` always comes from the Worker, so a
-running timer is valued against server time.
-
-## First-time setup (from scratch)
+### 1. Database
 
 ```bash
 bun install
-
-# 1. Create the database, then paste the returned id into wrangler.jsonc
-bunx wrangler d1 create time-track
-
-# 2. Apply the schema
-bun run db:migrate            # remote
-bun run db:migrate:local      # local dev copy
-
-# 3. Build and deploy
-bun run deploy
+bunx wrangler login
+bunx wrangler d1 create time-track    # note the database_id it prints
 ```
 
-`wrangler.jsonc` declares `time-track.example.com` as a custom domain route, so
-`bun run deploy` claims it — including the DNS record and certificate — provided the zone
-is on the account. `workers_dev` is deliberately `false`, because a live `*.workers.dev`
-hostname would sit outside the Access policy below.
-
-## Cloudflare Access
-
-To set it up, or to change who gets in:
+### 2. Cloudflare Access
 
 1. Zero Trust → Access → Applications → **Add a self-hosted application**.
-2. Domain `time-track.example.com`, path blank (protect everything).
+2. Domain: the hostname you will serve the app on, e.g. `time.example.org`. Leave the path
+   blank so everything is protected.
 3. Add exactly one policy: Action **Allow**, rule `Emails` → the addresses that should get
-   in. Resist adding a second policy that includes `everyone` — a permissive policy at any
+   in. Don't add a second policy that includes `everyone`: a permissive policy at any
    precedence supersedes the restrictive one.
-4. Copy the **Application Audience (AUD) tag** from the app's Overview tab.
-5. Put the team domain and that AUD into `wrangler.jsonc` `vars`:
+4. Copy the **Application Audience (AUD) tag** from the application's overview, and note
+   your team domain (`<team>.cloudflareaccess.com`).
 
-```jsonc
-"vars": {
-  "ACCESS_TEAM_DOMAIN": "yourteam.cloudflareaccess.com",
-  "ACCESS_AUD": "<the AUD tag>"
-}
+### 3. Configure
+
+`wrangler.jsonc` has four `CONFIGURE-ME` placeholders. Edit them by hand, or let the
+script fill them in:
+
+```bash
+TIME_TRACK_DOMAIN=time.example.org \
+TIME_TRACK_D1_DATABASE_ID=<database_id from step 1> \
+TIME_TRACK_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com \
+TIME_TRACK_ACCESS_AUD=<AUD tag from step 2> \
+bun run configure
 ```
 
-6. `bun run deploy`.
+If you deploy from a fork of this repository, keep that configured `wrangler.jsonc` out of
+any public branch, or use CI as described below.
 
-Neither value is a secret — both are already in the JWT the browser holds — so they live in
-`wrangler.jsonc` rather than in `wrangler secret`.
+### 4. Migrate and deploy
 
-Access blocks unauthenticated requests at the edge; the Worker independently verifies the
-signed `Cf-Access-Jwt-Assertion` (issuer, audience, expiry, RS256 signature against the
-team's rotating public keys, cached for an hour). Either alone would do — together, a
-routing mistake can't quietly expose the database.
+```bash
+bun run db:migrate    # applies migrations/ to the remote database
+bun run deploy        # builds, then deploys the Worker and claims the custom domain
+```
 
-Three settings make that gate unbypassable, and all three matter:
+The custom domain route makes `wrangler deploy` create the DNS record and certificate,
+provided the zone is on the same account. Open the domain, sign in through Access, and
+start with **Settings** (your timezone, name, address and logo) and **Clients**.
 
-- `workers_dev: false` — a live `*.workers.dev` hostname would be a second front door that
-  the Access application (bound to the custom domain) does not cover.
-- `assets.run_worker_first: true` — every request enters the Worker, so the check covers
-  the SPA shell as well as `/api/*`. Scoping it to API routes lets the asset worker serve
-  HTML without ever consulting the gate.
-- Verifying `aud` against the Application Audience tag — without it, any valid token from
-  the same Zero Trust team would be accepted, including from unrelated applications.
+### Deploying from CI
 
-**While both vars are empty the app is completely open.** That is intentional so
-`wrangler dev` works offline. Deployed with a non-empty team domain but no valid token, the
-Worker fails closed (`401`), so setting the vars before the Access application exists locks
-the app rather than exposing it.
+`.forgejo/workflows/deploy.yml` runs the typecheck, tests and build on every push and pull
+request. On `main` it also deploys, provided the repository defines:
+
+| Kind | Name | Value |
+|---|---|---|
+| Variable | `TIME_TRACK_DOMAIN`, `TIME_TRACK_D1_DATABASE_ID`, `TIME_TRACK_ACCESS_TEAM_DOMAIN`, `TIME_TRACK_ACCESS_AUD` | As in step 3 |
+| Variable | `CLOUDFLARE_ACCOUNT_ID` | Your account id |
+| Secret | `CLOUDFLARE_API_TOKEN` | A token with Workers Scripts Edit, D1 Edit and Account Settings Read on the account, plus Workers Routes Edit and Zone Read on the zone |
+
+It configures `wrangler.jsonc` on the runner, applies any new migrations, deploys, and then
+checks that an unauthenticated request is still redirected to Access. Without those
+variables, only the checks run. The workflow is written for Forgejo Actions, but the steps
+carry over to GitHub Actions with the `forgejo.` contexts renamed to `github.`.
+
+`.forgejo/workflows/mirror.yml` optionally mirrors `main` and tags to a GitHub repository
+(variable `GITHUB_MIRROR_REPO`, secret `MIRROR_SSH_KEY`).
+
+## How the Access gate works
+
+Access blocks unauthenticated requests at the edge, and the Worker independently verifies
+the signed `Cf-Access-Jwt-Assertion` (issuer, audience, expiry, and RS256 signature
+against the team's rotating public keys, cached for an hour). Either alone would do;
+together, a routing mistake can't quietly expose the database.
+
+Three settings in `wrangler.jsonc` close the remaining gaps:
+
+- `workers_dev: false`: a live `*.workers.dev` hostname would be a second front door that
+  the Access application, bound to your domain, does not cover.
+- `assets.run_worker_first: true`: every request enters the Worker, so the check covers the
+  SPA shell as well as `/api/*`.
+- `ACCESS_AUD`: without the audience check, any valid token from the same Zero Trust team
+  would be accepted, including tokens for unrelated applications.
+
+The team domain and audience are not secrets (both are in the JWT the browser holds), so
+they live in `vars` rather than in `wrangler secret`.
+
+The Worker fails closed. With either value blank it refuses every request (`503`); with a
+value that doesn't match a real assertion it returns `401`. The only way to run it without
+Access is `ALLOW_UNAUTHENTICATED=true`, which belongs in `.dev.vars` for local development
+and nowhere else.
 
 ## Local development
 
 ```bash
-cp .dev.vars.example .dev.vars   # blanks the Access vars for localhost
+cp .dev.vars.example .dev.vars   # turns the Access gate off locally
 bun run db:migrate:local
-bunx wrangler dev            # API + assets on :8787
-bun run dev                  # optional: Vite with HMR on :5173, proxying to :8787
-bun run seed:dev             # fill the local DB with plausible tracked time
-bun test                     # invoice and calendar maths
+bun run build                    # wrangler dev serves the SPA from dist/client
+bunx wrangler dev                # API + assets on :8787
+bun run dev                      # optional: Vite with HMR on :5173, proxying to :8787
+bun run seed:dev                 # optional: fill the local database with sample time
+bun test
 ```
 
-`bun run build` must have run at least once before `wrangler dev`, since the Worker
-serves the SPA out of `dist/client`.
-
-`.dev.vars` is required locally: `wrangler dev` inherits the production Access values from
-`wrangler.jsonc`, and with no Zero Trust session in front of localhost the Worker would
-reject every request. The local D1 copy is keyed by database id, so it needs its own
-`db:migrate:local` run.
+`.dev.vars` is gitignored and never uploaded by `wrangler deploy`.
 
 ## How invoicing works
 
 **Periods.** With a period day of 26, each period runs from midnight on the 26th to
-midnight on the 26th of the next month, *in your configured timezone*. Since you're
-UTC+2, "26 January 2026 00:00" is stored as `2026-01-25T22:00Z`. Consecutive periods abut
-exactly, so no tracked minute can fall between two invoices or into both.
+midnight on the 26th of the next month, *in your configured timezone*. Instants are stored
+in UTC, so in a UTC+2 zone "26 January 2026 00:00" is stored as `2026-01-25T22:00Z`.
+Consecutive periods abut exactly, so no tracked minute can fall between two invoices or
+into both. A period day past the end of a short month clamps to that month's last day.
 
-A period day past the end of a short month clamps to that month's last day (a cut-over of
-the 31st still yields exactly twelve periods a year).
+**Numbering.** Sequence numbers come from position, not a counter: the starting month
+gets the starting sequence, and each later period increments by one.
 
-**Numbering.** Sequence numbers come from position, not from a counter: the starting
-month gets the starting sequence, and each later period increments by one. Nothing is
-stored per invoice, so numbers can never drift, skip or double-issue.
+**Period naming.** A period that runs 26 January → 26 February can be named for either
+month, and both conventions are offered:
 
-**Period naming — worth a look.** Your spec said a period runs 26 Jan → 26 Feb *and* that
-on 14 August the list should reach August. Those don't quite agree: on 14 August the
-period actually in progress is the one that began 26 July. Rather than guess, both
-conventions are available under *Period naming*:
-
-| Mode | "January 2026" covers | Latest entry on 14 Aug 2026 |
+| Mode | "January 2026" covers | Latest period on 14 Aug 2026 |
 |---|---|---|
-| **Named for the month it starts in** (default, as literally specced) | 26 Jan → 26 Feb | July 2026 |
+| **Named for the month it starts in** (default) | 26 Jan → 26 Feb | July 2026 |
 | **Named for the month it ends in** | 26 Dec → 26 Jan | August 2026 |
 
-The boundaries are identical either way — only the labels and therefore which sequence
-number lands on which month shift. Pick whichever matches the invoices you've already
-sent, because changing it later renumbers everything.
+The boundaries are identical either way; only the labels move. Pick the one that matches
+invoices you've already sent, because changing it later renumbers everything.
 
-**Rounding** is applied per line item — once per distinct task description — not to each
+**Rounding** is applied per line item (once per distinct task description), not to each
 timer run and not to the grand total. Rounding each run would inflate a day of short
-check-ins; rounding only the total would leave the printed line items not adding up to the
-amount charged. Tracked time is always printed alongside the billed hours.
+check-ins; rounding only the total would leave the printed lines not adding up to the
+amount charged.
 
-**The open period** is always listed and always billable-to-date, with a running timer
-counted up to the moment you open the document.
+**The open period** is always listed and billable to date, with a running timer counted
+up to the moment you open the document. Client clocks are never trusted: `now` always
+comes from the Worker.
 
-## Tab icon
+### The invoice document
 
-A clock that carries the timer's state: the Start button's blue when idle, the Stop
-button's red while a timer runs, so a glance at the tab is enough.
-
-`public/favicon.svg` is the source of truth and what shows before the app loads. The two
-PNGs beside it are rendered from it (`favicon-32.png` for browsers that don't take SVG
-favicons, `apple-touch-icon.png` full-bleed for the iOS home screen — iOS masks it into a
-rounded square, so a disc on a tile would read as a sticker). Regenerating them is a
-headless render of the SVG; there is no build step, they are committed.
-
-At runtime `src/client/favicon.ts` draws the same geometry to a canvas and swaps in a PNG
-data URL. Canvas rather than an SVG data URL because SVG favicon support is uneven, and the
-colours are read from the live CSS custom properties, so the icon follows the light/dark
-palette and any change to `--accent` or `--danger`.
-
-State is owned by `App`, not the tracker page, so the icon stays correct while you are on
-Invoices or Settings. The tracker updates it immediately on start/stop; a 60-second poll and
-a refresh on window focus catch a timer started on another device.
-
-## Mobile / iOS
-
-The layout is responsive down to a 390px phone viewport, and a few things are deliberate
-rather than incidental:
-
-- **Controls are 16px on touch devices.** iOS Safari zooms the whole page when a control
-  smaller than 16px takes focus, which leaves the layout shifted afterwards. A
-  `pointer: coarse` rule lifts every input, select and textarea.
-- **No viewport-height floor on phones.** The full-height rule that makes the sidebar read
-  as a column is scoped to desktop, and uses `vh` rather than `dvh`. An earlier version used
-  `100dvh` here, which was a mistake: iOS resizes `dvh` as its toolbars collapse and expand,
-  so the document grew when scrolling down and shrank when scrolling up. The scroll position
-  was clamped against a height that kept moving, and the top of the page became unreachable —
-  it sprang back down on release. Nothing on a phone needs that floor.
-- **`env(safe-area-inset-*)` padding** so nothing hides under the notch or home indicator
-  in landscape, with `viewport-fit=cover` on the viewport meta — without it those insets
-  resolve to zero and the padding does nothing.
-- **`-webkit-text-size-adjust: 100%`**, or Safari inflates body text on rotation.
-- **Nothing scrolls the page sideways.** The sidebar becomes a top bar whose nav scrolls
-  within itself, and wide tables sit in their own `overflow-x` container. Verified at 390px
-  on all five pages, and in landscape.
-- Drag grips grow from 9px to 22px on touch, which is the difference between usable and not.
-
-Caveat on how this was checked: it was measured in Chromium under iPhone emulation
-(viewport, device pixel ratio, touch, iOS user agent). **It has not been run against real
-WebKit** — the engine could not be installed on the development machine. The fixes above
-target documented Safari behaviours, but if something looks wrong on an actual device,
-that gap is the reason.
-
-## Clients
-
-Each client has its own invoice series, rate, currency, period day, rounding and payment
-terms, and its own colour in the calendar. Time entries belong to exactly one client, and
-every surface that creates or edits an entry — the timer bar, the manual entry form, the
-edit modal, the inline row editor and the CSV import — carries a client selector. The
-selectors hide themselves when only one client exists, so the single-client case is
-unchanged.
-
-`Settings → Default client` decides where new entries are attributed and which client the
-invoice list opens on. There is no delete: a client with invoices behind it should not
-vanish.
-
-Invoice URLs are `/invoice/<client-slug>/<period>`. The old `/invoice/<period>` form still
-works — it 301s to the default client, so bookmarks made before clients existed resolve.
-A client's slug is editable, but changing it breaks links to invoices already sent.
-
-## Editing time
-
-Three ways in, all writing the same `PATCH /api/entries/:id`:
-
-- **Click a block in the calendar** to open a modal for its description and times.
-- **Drag the top or bottom edge of a block** in the day view. Boundaries snap to the
-  nearest 15 minutes, and the new times are shown on the block as you drag. Handles are
-  offered only in the day view, where blocks are wide enough to grab.
-- **Click a row in the entries list** for the same edit inline.
-
-The description box at the top stays editable while a timer runs — it *is* that entry's
-description at that point. Edits save shortly after typing stops, and immediately on blur,
-on Enter, or when the timer is stopped. Enter deliberately does not stop the timer while one
-is running; losing a timer to a keystroke meant for the text would be a poor trade.
-
-Dismissing the modal — backdrop, `Escape` — **saves** rather than discards. Losing a
-correction to a stray click is the worse failure, and a toast confirms the write. Two
-deliberate exceptions: if nothing changed, nothing is written and no toast appears; and if
-the input is invalid the modal stays open with the error, since neither saving nor silently
-dropping it would be right.
-
-A block is only resizable when its drawn boundaries are the entry's real ones. A slice of
-an entry that spans midnight is shown on both days but carries neither true edge, and a
-running timer has no end — so those grips are withheld rather than allowed to corrupt the
-entry.
-
-### Additional line items
-
-The invoice page carries a small form under the toolbar for expenses, licences, a fixed fee
-or a discount. Items belong to one period and appear only on that invoice.
-
-They land as italic rows beneath the time lines, with the hours and rate columns left blank
-rather than zeroed, and the totals block splits into *Time subtotal*, *Additional items* and
-*Total due*. Negative amounts are accepted deliberately. The editor is part of the page
-furniture, not the document, so it does not print.
-
-Adding and removing are plain form posts that redirect back to the document, so a refresh
-never re-submits and the whole thing works without JavaScript. Deletes are scoped by period
-as well as id, so a stale form cannot reach another invoice's items.
-
-## Importing from Toggl
-
-The **Import** page takes a Toggl Track detailed CSV export. Nothing is written until a
-preview has been shown, and the preview is produced by the same code path as the commit,
-so the two cannot disagree.
-
-**Timezone is the one thing you must get right.** A Toggl export records bare wall-clock
-times — `"2026-08-13","14:42:09"` — with no offset anywhere in the file, so it is literally
-impossible to infer. The importer asks which zone those clocks were read in and defaults to
-this app's timezone. Set the two to the same value and every entry keeps the calendar day
-it had in Toggl.
-
-Other behaviour worth knowing:
-
-- **Duplicates** are matched on start instant + end instant + description. Re-importing the
-  same file imports nothing. Note that re-importing under a *different* timezone is
-  deliberately not treated as a duplicate — those are genuinely different instants, so a
-  corrected re-import is not silently swallowed. Delete the first attempt before retrying.
-- **Client, project, task and tag columns are ignored.** Everything belongs to the single
-  implicit project for now.
-- **Non-billable rows are imported by default**, since this app has no billable flag and
-  bills whatever it tracks. The preview states the count, and a checkbox skips them.
-- **The `Duration` column is cross-checked** against the timestamps; a row whose stated
-  duration disagrees with its own clocks is reported rather than guessed at.
-- **Bad rows never cost you the good ones** — each is listed with its line number.
-- The preview breaks the import down **per invoice period**, so you can see exactly which
-  invoices it will change before committing.
-
-## Export & backup
-
-Two download links on the **Settings** page, both plain GETs behind the same Access check
-as everything else:
-
-- **`/api/export/entries.csv`** — every completed entry across all clients, with wall-clock
-  times in the app's configured timezone. The columns are exactly the ones the Toggl
-  importer reads, so the file round-trips through the Import page (there is a test for
-  this). A still-running entry is excluded rather than given an invented end, which would
-  also corrupt duplicate detection on re-import.
-- **`/api/export/backup.json`** — the complete database contents as JSON: settings,
-  clients, all entries (including a running one) and invoice extras, wrapped in
-  `{ format: "time-track-backup", version: 1, exportedAt }`.
-
-Filenames are dated in the configured timezone, e.g. `time-track-backup-2026-09-01.json`.
-
-For a restorable server-side snapshot there is also `wrangler d1 export time-track
---remote --output backups/backup-<date>.sql`, which produces SQL that can be replayed with
-`wrangler d1 execute`.
-
-## The invoice document
-
-`/invoice/2026-06` is server-rendered HTML laid out for A4. Print or Save-as-PDF from the
-browser. It carries the logo, both addresses, line items, totals, an optional day-by-day
-time log, and your footer.
-
-### Layout toggles
-
-Two checkboxes in the document's toolbar (neither prints):
+`/invoice/<client>/<period>` is server-rendered HTML laid out for A4. It carries your logo,
+both addresses, line items, totals, an optional day-by-day time log, and your footer. Two
+toolbar checkboxes, neither of which prints, change the layout:
 
 | | On | Off |
 |---|---|---|
-| **Detailed invoice** | One line per task description, with a raw *Tracked* column and total alongside the billed hours | A single line — *Software development services - 26 January 2026 to 26 February 2026* — and no *Tracked* figures |
-| **Detailed time log** | Day-by-day breakdown, starting on its own page | Omitted entirely |
+| **Detailed invoice** | One line per task description, with tracked time beside billed hours | A single summary line, e.g. *Software development services - 26 January 2026 to 26 February 2026* |
+| **Detailed time log** | Day-by-day breakdown on its own page | Omitted |
 
-**The amount due is identical either way.** Rounding is applied per task description, and
-the summary line reports the sum of those already-rounded lines rather than re-rounding the
-raw total — otherwise a presentation choice would change what you charge. There is a test
-covering every rounding mode and increment for exactly this.
+The amount due is identical either way: the summary line is the sum of the
+already-rounded lines, never a re-rounding of the raw total. Defaults are set per client;
+a per-invoice choice lives only in the query string (`?detailed=0&timelog=1`), so any
+rendering is reproducible from its URL. The toolbar is a plain GET form and works without
+JavaScript.
 
-The summary line's wording is configurable on the invoice settings page — the period dates
-are appended automatically, and clearing the field falls back to "Software development
-services" rather than leaving a dangling dash.
+**Additional line items** (expenses, licences, a fixed fee, or a discount, since negative
+amounts are allowed) belong to one client's period and appear beneath the time lines with
+the hours and rate left blank. Adding and removing them are plain form posts that redirect
+back, so a refresh never re-submits.
 
-Defaults live on the invoice settings page. A per-invoice choice is **not** persisted: it
-lives in the URL as `?detailed=0&timelog=1`, so a particular rendering is reproducible and
-can be bookmarked or handed to a headless renderer. Only `1/true/on/yes` and
-`0/false/off/no` are recognised; anything absent or unrecognised falls back to the
-configured default rather than silently rendering the wrong document.
+## Clients
 
-The toolbar is a plain GET form, so the toggles work with JavaScript disabled. Scripting
-only tidies the resulting query string.
+Each client has its own invoice series and terms. Every place that creates or edits an
+entry has a client selector, which hides itself while only one client exists. `Settings →
+Default client` decides where new entries go and which client the invoice list opens on.
+There is no delete: a client with invoices behind it should not vanish.
 
-## Notes
+A client's slug forms its invoice URLs. It is editable, but changing it breaks links to
+invoices already sent. The older `/invoice/<period>` form redirects to the default client.
 
-- Everything belongs to one implicit project. The schema keeps `entries` free of a project
-  column for now; adding one later is an additive migration.
-- The logo is stored as a data URL in the settings row, capped at ~350KB — this avoids
-  adding R2 for a single small image.
-- Starting a timer while another runs stops the previous one, as Toggl does.
-- Time entries store UTC instants. Changing the timezone setting re-buckets the calendar
-  and moves period boundaries; it never rewrites stored entries.
+## Editing time
+
+- **Click a block in the calendar** to edit its description and times in a modal.
+  Dismissing the modal saves rather than discards; a toast confirms the write. Invalid
+  input keeps it open with the error.
+- **Drag the top or bottom edge of a block** in the day view. Boundaries snap to 15
+  minutes. Edges are only draggable where they are the entry's real ones, so not on a slice
+  of an entry that spans midnight, and not on the end of a running timer.
+- **Click a row in the entries list** to edit it inline.
+
+The description box stays editable while a timer runs: it *is* that entry's description.
+Edits save shortly after you stop typing, and immediately on blur, Enter, or Stop. Enter
+never stops the timer. Starting a timer while another runs stops the first.
+
+## Importing from Toggl
+
+The **Import** page takes a Toggl Track *detailed* CSV export. Nothing is written until a
+preview has been shown, and the preview runs the same code as the commit.
+
+**Get the timezone right.** Toggl exports bare wall-clock times with no offset, so the
+importer asks which zone they were read in. Use the same zone as the app and every entry
+keeps the calendar day it had in Toggl.
+
+- **Duplicates** (same start, end and description) are skipped, so re-importing a file is
+  a no-op. Re-importing under a *different* timezone is not a duplicate, since those are
+  different instants; delete the first attempt before retrying.
+- Client, project, task and tag columns are ignored; choose the client on the Import page.
+- Non-billable rows are imported by default (the app bills what it tracks); a checkbox
+  skips them.
+- The `Duration` column is cross-checked against the timestamps, and disagreements are
+  reported rather than guessed at.
+- Bad rows are listed with line numbers and never block the good ones.
+- The preview breaks the import down per invoice period, so you can see which invoices it
+  will change.
+
+## Export and backup
+
+Two download links on the **Settings** page:
+
+- **`/api/export/entries.csv`**: every completed entry, in exactly the columns the Toggl
+  importer reads, so the file round-trips through the Import page.
+- **`/api/export/backup.json`**: settings, clients, all entries (including a running one)
+  and line items, as `{ format: "time-track-backup", version: 1, exportedAt, ... }`.
+
+For a restorable server-side snapshot, `bunx wrangler d1 export time-track --remote
+--output backup.sql` produces SQL that `wrangler d1 execute` can replay.
+
+## Data model
+
+Four tables, created by `migrations/0001_init.sql`.
+
+- **`entries`**: one row per tracked block. Instants are UTC epoch **milliseconds**;
+  `ended_at` is `NULL` while the timer runs. A partial index keeps "is a timer running?" a
+  point lookup, and at most one row is open at a time.
+- **`clients`**: identity (`slug`, `name`, `address`, `colour`), invoice series, terms
+  (`currency`, `hourly_rate`, rounding) and document defaults.
+- **`settings`**: a single row (`CHECK (id = 1)`) holding what belongs to you rather than a
+  client: timezone, logo, name, address and `default_client_id`. It also carries a few
+  unused columns from before clients had their own table.
+- **`invoice_extras`**: hand-entered line items, keyed by client and `period_key`
+  (`YYYY-MM`, the identifier the invoice URL uses).
+
+Nothing else about an invoice is stored. Because a period key's meaning depends on the
+period day and naming mode, changing either re-points existing line items, the same caveat
+that applies to invoice numbering. Changing the timezone re-buckets the calendar and moves
+period boundaries, but never rewrites stored entries.
+
+Schema changes go in new numbered files (`bunx wrangler d1 migrations create time-track
+<name>`). Never edit a migration a database has already applied: wrangler records them by
+filename and won't re-run them.
+
+The logo is stored as a data URL in the settings row (capped at about 350KB), which avoids
+needing R2 for one small image.
+
+## API
+
+All routes sit behind the Access check. Everything under `/api` is JSON, apart from the two
+export downloads.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/api/state` | Settings, clients, the running entry (if any), and server time |
+| `GET` · `PUT` | `/api/settings` | Read / update the settings row |
+| `GET` · `POST` | `/api/clients` | List / create clients |
+| `PATCH` | `/api/clients/:id` | Update a client |
+| `POST` | `/api/timer/start` | Stop any running timer and start a new one |
+| `POST` | `/api/timer/stop` | Stop the running timer |
+| `GET` | `/api/entries?from=&to=[&clientId=]` | Entries overlapping a UTC-ms window |
+| `POST` | `/api/entries` | Create a completed entry |
+| `PATCH` · `DELETE` | `/api/entries/:id` | Edit or remove an entry |
+| `GET` | `/api/suggestions?q=` | Past descriptions, most recently used first |
+| `POST` | `/api/import` | Preview or commit a Toggl CSV import |
+| `GET` | `/api/export/entries.csv` | Toggl-compatible CSV download |
+| `GET` | `/api/export/backup.json` | Full JSON backup download |
+| `GET` | `/api/invoices[?client=]` | Every period that has begun, with totals (default client if omitted) |
+| `GET` | `/api/invoices/:client/:period` | One invoice as JSON (`:client` is the slug, `:period` is `YYYY-MM`) |
+| `GET` | `/invoice/:client/:period` | The invoice as print-ready HTML |
+| `POST` | `/invoice/:client/:period/extras` | Add a line item (form post, redirects back) |
+| `POST` | `/invoice/:client/:period/extras/:id/delete` | Remove one (form post, redirects back) |
+
+## Mobile notes
+
+The layout works down to a 390px phone viewport. On touch devices controls are 16px
+(smaller ones make iOS Safari zoom on focus), drag grips grow from 9px to 22px, wide tables
+scroll within their own container, and safe-area insets apply with `viewport-fit=cover`.
+The desktop full-height layout deliberately uses `vh` rather than `dvh`, because iOS
+resizes `dvh` as its toolbars collapse, which made the top of the page unreachable.
+
+This was checked in Chromium under iPhone emulation, not on real WebKit.
+
+## Licence
+
+Copyright © 2026 Aaron.
+
+Time Track is free software: you can redistribute it and/or modify it under the terms of
+the GNU Affero General Public License as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version. See [LICENSE](LICENSE).
+
+In short: you can run, study, change and share it, but if you distribute a modified
+version, or let other people use one over a network, you must make its source available
+under the same licence.
