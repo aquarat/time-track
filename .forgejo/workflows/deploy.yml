@@ -1,0 +1,95 @@
+# Checks every push and pull request; deploys main to Cloudflare.
+#
+# The deploy steps run only where the repository defines the variables below, so
+# a copy of this repository without them still gets the checks and nothing else.
+#
+#   Variables  TIME_TRACK_DOMAIN, TIME_TRACK_D1_DATABASE_ID,
+#              TIME_TRACK_ACCESS_TEAM_DOMAIN, TIME_TRACK_ACCESS_AUD,
+#              CLOUDFLARE_ACCOUNT_ID
+#   Secret     CLOUDFLARE_API_TOKEN (Workers Scripts Edit, D1 Edit and Account
+#              Settings Read on the account; Workers Routes Edit and Zone Read on
+#              the zone that holds TIME_TRACK_DOMAIN)
+name: Check and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: time-track-${{ forgejo.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: 'true'
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  deploy:
+    name: Check and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Bun and dependencies
+        run: |
+          npm install --global "$(node -p 'require("./package.json").packageManager')"
+          bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Unit tests
+        run: bun test
+
+      - name: Build
+        run: bun run build
+
+      - name: Configure wrangler.jsonc
+        if: vars.TIME_TRACK_DOMAIN != '' && forgejo.ref == 'refs/heads/main' && (forgejo.event_name == 'push' || forgejo.event_name == 'workflow_dispatch')
+        env:
+          TIME_TRACK_DOMAIN: ${{ vars.TIME_TRACK_DOMAIN }}
+          TIME_TRACK_D1_DATABASE_ID: ${{ vars.TIME_TRACK_D1_DATABASE_ID }}
+          TIME_TRACK_ACCESS_TEAM_DOMAIN: ${{ vars.TIME_TRACK_ACCESS_TEAM_DOMAIN }}
+          TIME_TRACK_ACCESS_AUD: ${{ vars.TIME_TRACK_ACCESS_AUD }}
+        run: bun run configure
+
+      - name: Apply database migrations
+        if: vars.TIME_TRACK_DOMAIN != '' && forgejo.ref == 'refs/heads/main' && (forgejo.event_name == 'push' || forgejo.event_name == 'workflow_dispatch')
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: bunx wrangler d1 migrations apply time-track --remote
+
+      - name: Deploy
+        if: vars.TIME_TRACK_DOMAIN != '' && forgejo.ref == 'refs/heads/main' && (forgejo.event_name == 'push' || forgejo.event_name == 'workflow_dispatch')
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: bunx wrangler deploy
+
+      # The site must still be behind Access: an unauthenticated request should be
+      # redirected to the team's login page, never answered by the app.
+      - name: Verify the live site is gated
+        if: vars.TIME_TRACK_DOMAIN != '' && forgejo.ref == 'refs/heads/main' && (forgejo.event_name == 'push' || forgejo.event_name == 'workflow_dispatch')
+        env:
+          TIME_TRACK_DOMAIN: ${{ vars.TIME_TRACK_DOMAIN }}
+          TIME_TRACK_ACCESS_TEAM_DOMAIN: ${{ vars.TIME_TRACK_ACCESS_TEAM_DOMAIN }}
+        run: |
+          set -euo pipefail
+          for path in / /api/state; do
+            read -r status location < <(curl -sS -o /dev/null --max-time 20 \
+              -w '%{http_code} %{redirect_url}' "https://${TIME_TRACK_DOMAIN}${path}")
+            case "$status $location" in
+              "302 https://${TIME_TRACK_ACCESS_TEAM_DOMAIN}/"*) echo "$path: $status to Access login" ;;
+              *) echo "$path: expected a 302 to Access, got $status ${location:-<none>}"; exit 1 ;;
+            esac
+          done

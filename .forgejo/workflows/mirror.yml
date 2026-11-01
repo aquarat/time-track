@@ -1,0 +1,64 @@
+# Mirrors main and tags to a GitHub repository. Forgejo is authoritative; other
+# branches are never pushed. Does nothing unless the repository defines
+#
+#   Variable  GITHUB_MIRROR_REPO  e.g. git@github.com:owner/time-track.git
+#   Secret    MIRROR_SSH_KEY      private half of a write-enabled GitHub deploy key
+name: Mirror to GitHub
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  workflow_dispatch:
+  schedule:
+    - cron: '41 3 * * *'
+
+concurrency:
+  group: github-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror main and tags
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Synchronise GitHub from Forgejo
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+          FORGEJO_SERVER_URL: ${{ forgejo.server_url }}
+          FORGEJO_REPOSITORY: ${{ forgejo.repository }}
+          GITHUB_REPO: ${{ vars.GITHUB_MIRROR_REPO }}
+          MIRROR_SSH_KEY: ${{ secrets.MIRROR_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GITHUB_REPO" ] || [ -z "$MIRROR_SSH_KEY" ]; then
+            echo 'GITHUB_MIRROR_REPO or MIRROR_SSH_KEY not set; nothing to mirror.'
+            exit 0
+          fi
+          umask 077
+          work=$(mktemp -d "${RUNNER_TEMP}/time-track-mirror.XXXXXX")
+          trap 'rm -rf "$work"' EXIT
+          printf '%s\n' "$MIRROR_SSH_KEY" > "$work/key"
+          unset MIRROR_SSH_KEY
+          # GitHub's published Ed25519 host key (GET https://api.github.com/meta).
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$work/known_hosts"
+          export GIT_SSH_COMMAND="ssh -F /dev/null -i '$work/key' -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UserKnownHostsFile='$work/known_hosts' -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=20"
+          export GIT_TERMINAL_PROMPT=0
+
+          git init --bare "$work/repo.git"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.${FORGEJO_SERVER_URL}/.extraheader"
+          export GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$FORGEJO_TOKEN" | base64 -w0)"
+          git -C "$work/repo.git" fetch --no-tags "${FORGEJO_SERVER_URL}/${FORGEJO_REPOSITORY}.git" \
+            '+refs/heads/main:refs/heads/main' '+refs/tags/*:refs/tags/*'
+          unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 FORGEJO_TOKEN
+
+          # main and tags only; --prune removes tags deleted on Forgejo.
+          git -C "$work/repo.git" push --atomic --prune "$GITHUB_REPO" \
+            '+refs/heads/main:refs/heads/main' '+refs/tags/*:refs/tags/*'
+          git -C "$work/repo.git" for-each-ref --format='%(objectname)%09%(refname)' refs/heads refs/tags | sort > "$work/expected"
+          git ls-remote --refs --heads --tags "$GITHUB_REPO" | sort > "$work/actual"
+          diff -u "$work/expected" "$work/actual"
+          echo 'GitHub matches Forgejo main and tags.'

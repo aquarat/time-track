@@ -4,12 +4,17 @@
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-08-01",
 
+  // The four CONFIGURE-ME values below are placeholders. Replace them by hand, or
+  // run `bun run configure` with the matching environment variables set (see
+  // README, "Deploying your own instance"). Deploying with them unchanged fails:
+  // the route names a domain you do not own and the database does not exist.
+
   // Only serve from the custom domain, which sits behind Cloudflare Access.
-  // Leaving workers.dev enabled would expose an un-Access'd hostname.
+  // Leaving workers.dev enabled would expose a hostname Access does not cover.
   "workers_dev": false,
   "routes": [
     {
-      "pattern": "time-track.example.com",
+      "pattern": "CONFIGURE-ME.example.com",
       "custom_domain": true
     }
   ],
@@ -29,24 +34,23 @@
     {
       "binding": "DB",
       "database_name": "time-track",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // From `bunx wrangler d1 create time-track`.
+      "database_id": "CONFIGURE-ME-D1-DATABASE-ID",
       "migrations_dir": "./migrations"
     }
   ],
 
   "vars": {
-    // Cloudflare Access enforcement (see README "Locking it down").
+    // Cloudflare Access enforcement (see README, "Cloudflare Access").
     //
-    // ACCESS_AUD is the "Time Track" Access application's Audience tag. It pins
-    // the Worker to that one application: without it, any valid token issued to
-    // the same Zero Trust team — including from the other apps on this account —
-    // would be accepted here.
+    // ACCESS_AUD is your Access application's Audience tag. It pins the Worker to
+    // that one application: without it, any valid token issued to the same Zero
+    // Trust team, including for other applications, would be accepted here.
     //
     // Neither value is a secret; both appear in the JWT the browser already
-    // holds. EMPTY strings disable verification entirely, which is intended only
-    // for `wrangler dev` — never deploy with them blank.
-    "ACCESS_TEAM_DOMAIN": "yourteam.cloudflareaccess.com",
-    "ACCESS_AUD": "CONFIGURE-ME"
+    // holds. If either is empty the Worker refuses every request.
+    "ACCESS_TEAM_DOMAIN": "CONFIGURE-ME.cloudflareaccess.com",
+    "ACCESS_AUD": "CONFIGURE-ME-ACCESS-AUD"
   },
 
   "observability": {
