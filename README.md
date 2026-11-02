@@ -11,6 +11,8 @@ about an invoice is stored, so numbering cannot drift, skip or double-issue.
 
 It is single-tenant: one instance per person, with Cloudflare Access deciding who that is.
 
+![Week view of the calendar, with a timer running](docs/screenshots/calendar-week.png)
+
 ## Features
 
 - **Timer** with a description box that stays editable while it runs, most-recently-used
@@ -26,6 +28,16 @@ It is single-tenant: one instance per person, with Cloudflare Access deciding wh
 - **Toggl Track import** from a detailed CSV export, previewed before anything is written.
 - **Export** as a Toggl-compatible CSV or a complete JSON backup.
 - Works on phones, and the tab icon shows whether a timer is running.
+
+![Month view: a heatmap of tracked hours per day](docs/screenshots/calendar-month.png)
+
+![Invoice list for one client: one row per period, numbered automatically](docs/screenshots/invoices.png)
+
+<p align="center">
+  <img src="docs/screenshots/invoice.png" width="75%" alt="A print-ready invoice with a hand-entered line item">
+</p>
+
+<sub>The screenshots show made-up demo data.</sub>
 
 ## Stack
 
