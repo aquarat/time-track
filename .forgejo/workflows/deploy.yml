@@ -87,7 +87,7 @@ jobs:
           set -euo pipefail
           for path in / /api/state; do
             read -r status location < <(curl -sS -o /dev/null --max-time 20 \
-              -w '%{http_code} %{redirect_url}' "https://${TIME_TRACK_DOMAIN}${path}")
+              -w '%{http_code} %{redirect_url}\n' "https://${TIME_TRACK_DOMAIN}${path}")
             case "$status $location" in
               "302 https://${TIME_TRACK_ACCESS_TEAM_DOMAIN}/"*) echo "$path: $status to Access login" ;;
               *) echo "$path: expected a 302 to Access, got $status ${location:-<none>}"; exit 1 ;;
