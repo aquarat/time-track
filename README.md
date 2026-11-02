@@ -115,7 +115,7 @@ variables, only the checks run. The workflow is written for Forgejo Actions, but
 carry over to GitHub Actions with the `forgejo.` contexts renamed to `github.`.
 
 `.forgejo/workflows/mirror.yml` optionally mirrors `main` and tags to a GitHub repository
-(variable `GITHUB_MIRROR_REPO`, secret `MIRROR_SSH_KEY`).
+(variable `MIRROR_GITHUB_REPO`, secret `MIRROR_SSH_KEY`).
 
 ## How the Access gate works
 
