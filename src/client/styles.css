@@ -1128,16 +1128,36 @@ legend {
 
   .timer-bar {
     flex-wrap: wrap;
+    gap: 10px;
   }
   .description-field {
     flex-basis: 100%;
   }
-  /* The description takes the first row; the clock then spreads so Start lands
-     on the right edge rather than floating in the middle of the second row. */
-  .timer-clock {
+  /* The description takes the first row. On the second, the client picker is
+     what gives way: it takes the spare width and truncates a long name, and
+     wraps onto a row of its own on very narrow screens. The clock never
+     shrinks (it used to, and Stop was drawn over it), and Stop or Start sits
+     on the right edge whether or not the picker is shown. */
+  .timer-bar .client-picker {
+    flex: 1 1 110px;
+    max-width: 240px;
+  }
+  .timer-bar .client-picker select {
     flex: 1;
-    text-align: left;
     min-width: 0;
+    max-width: none;
+    text-overflow: ellipsis;
+  }
+  .timer-clock {
+    flex: none;
+    min-width: 0;
+    text-align: left;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .timer-button {
+    flex: none;
+    margin-left: auto;
   }
 
   .modal-times {
